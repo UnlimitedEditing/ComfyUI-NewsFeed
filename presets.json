@@ -1,0 +1,25 @@
+{
+  "tone": {
+    "0": {"name": "neutral news",  "script": "Plain, factual news bulletin. Short sentences. No opinion.", "sfx": "news_stinger"},
+    "1": {"name": "deadpan",       "script": "Deadpan anchor. Dry understatement, flat delivery, one wry aside at most.", "sfx": "soft_blip"},
+    "2": {"name": "hype",          "script": "High-energy and punchy. Rhetorical questions, strong verbs, build to a payoff.", "sfx": "whoosh_hit"},
+    "3": {"name": "documentary",   "script": "Calm documentary narration. Context first, measured pacing, vivid but restrained.", "sfx": "ambient_swell"},
+    "4": {"name": "explainer",     "script": "Clear teacher voice. Define terms, explain why it matters, end with one takeaway.", "sfx": "soft_blip"},
+    "5": {"name": "kids",          "script": "Friendly and simple for ages 8-12. Short words, one fun comparison, no scary detail.", "sfx": "pop"}
+  },
+  "visual": {
+    "0": {"name": "photoreal",    "prefix": "photorealistic editorial photo, natural light, "},
+    "1": {"name": "illustration", "prefix": "flat vector editorial illustration, bold shapes, limited palette, "},
+    "2": {"name": "pixel",        "prefix": "pixel art scene, 16-bit palette, crisp pixels, "},
+    "3": {"name": "collage",      "prefix": "cut-paper collage, halftone texture, mixed media, "},
+    "4": {"name": "noir",         "prefix": "black-and-white film noir still, high contrast, "}
+  },
+  "caption": {
+    "0": "off",
+    "1": "plain (timed from audio duration, sentence-level)",
+    "2": "karaoke word highlight (needs Whisper alignment)",
+    "3": "big bold single-line"
+  },
+  "camera": ["slow push-in", "slow pull-out", "pan left", "pan right", "tilt up", "static with subtle drift"],
+  "words_per_second": 2.6
+}

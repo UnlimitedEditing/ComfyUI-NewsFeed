@@ -1,0 +1,9 @@
+{
+  "feeds": [
+    {"category": "world",   "url": "https://feeds.bbci.co.uk/news/world/rss.xml"},
+    {"category": "tech",    "url": "https://feeds.bbci.co.uk/news/technology/rss.xml"},
+    {"category": "science", "url": "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"},
+    {"category": "business","url": "https://feeds.bbci.co.uk/news/business/rss.xml"},
+    {"category": "africa",  "url": "https://feeds.bbci.co.uk/news/world/africa/rss.xml"}
+  ]
+}
