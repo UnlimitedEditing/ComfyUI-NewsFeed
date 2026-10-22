@@ -4,7 +4,7 @@ import math
 import numpy as np
 import torch
 
-from . import core, video
+from . import core, video, qwentts
 
 
 def _data_image(text):
@@ -215,7 +215,11 @@ class NewsGateAudio:
 
 NODE_CLASS_MAPPINGS = {"NewsPickStory": NewsPickStory, "NewsFinishScript": NewsFinishScript,
                        "NewsShotLists": NewsShotLists, "NewsKokoro": NewsKokoro, "NewsCompile": NewsCompile,
-                       "NewsMark": NewsMark, "NewsGateAudio": NewsGateAudio}
+                       "NewsMark": NewsMark, "NewsGateAudio": NewsGateAudio,
+                       "NewsQwenTTS": qwentts.NewsQwenTTS, "NewsRepeatLine": qwentts.NewsRepeatLine,
+                       "NewsSplitLines": qwentts.NewsSplitLines}
 NODE_DISPLAY_NAME_MAPPINGS = {"NewsPickStory": "News Pick Story", "NewsFinishScript": "News Finish Script",
                               "NewsShotLists": "News Shot Lists", "NewsKokoro": "News Kokoro TTS",
-                              "NewsCompile": "News Compile", "NewsMark": "News Mark", "NewsGateAudio": "News Gate Audio"}
+                              "NewsCompile": "News Compile", "NewsMark": "News Mark", "NewsGateAudio": "News Gate Audio",
+                              "NewsQwenTTS": "News Qwen3-TTS (batch)", "NewsRepeatLine": "News Repeat Line",
+                              "NewsSplitLines": "News Split Lines"}
