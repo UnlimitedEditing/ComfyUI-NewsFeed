@@ -196,11 +196,11 @@ MAX_SHOTS = 8   # time budget: every shot costs one MOSS still (6 shots + 6 step
 # format code -> generated-still size, output video size, safe regions (0-1000 [y0, x0, y1, x1])
 FORMATS = {
     0: {"name": "16:9", "gen": (1024, 576), "out": (1280, 720),
-        "title": [50, 80, 230, 920], "subject": [200, 120, 780, 880]},
+        "title": [50, 150, 240, 850], "subject": [200, 120, 780, 880]},
     1: {"name": "9:16", "gen": (576, 1024), "out": (720, 1280),
-        "title": [110, 60, 270, 940], "subject": [210, 80, 700, 920]},    # bottom ~30% left clear for app UI + captions
+        "title": [110, 130, 280, 870], "subject": [210, 80, 700, 920]},    # bottom ~30% left clear for app UI + captions
     2: {"name": "1:1", "gen": (768, 768), "out": (1024, 1024),
-        "title": [60, 60, 230, 940], "subject": [180, 100, 760, 900]},
+        "title": [60, 130, 240, 870], "subject": [180, 100, 760, 900]},
 }
 
 
@@ -348,6 +348,18 @@ _SOMBRE_WORDS = re.compile(r"\b(autopsy|post-mortem|corpse|dead body|bodies|body
                            r"morgue|medical examiner)\b", re.I)
 
 
+_SOMBRE_SCENES = [
+    "an empty stadium at dusk with candles on the pitch",
+    "a folded team jersey resting on a bench beside white flowers",
+    "flowers and candles beneath floodlights",
+    "a quiet stadium tunnel with soft light at the far end",
+    "a single scarf tied to a railing at sunset",
+    "rows of empty seats in warm evening light",
+    "a lit candle in front of a team crest, softly out of focus",
+    "a bouquet laid on the touchline of an empty pitch",
+]
+
+
 def is_sombre(title, source):
     """Deaths, disasters and the like: pictures must be respectful and symbolic, never literal."""
     return bool(_SOMBRE_RE.search((title or "") + " " + (source or "")[:700]))
@@ -416,8 +428,8 @@ def finish_script(llm_text, story):
                 prompt = line_txt or "a scene from the story"
             if sombre:
                 prompt = _SOMBRE_WORDS.sub("", prompt)
-                prompt += (", respectful and sombre, non-graphic symbolic scene such as an empty stadium at dusk, "
-                           "candles or flowers, soft muted light, no injury, no medical scene")
+                prompt += (", respectful and sombre, non-graphic, symbolic: " + _SOMBRE_SCENES[i % len(_SOMBRE_SCENES)] +
+                           ", soft muted light, no injury, no medical scene")
             prompt = story["visual_prefix"] + prompt
         shots.append({"line": repair_text((s.get("line") or "").strip(), story.get("source", "")), "media_id": mid,
                       "instruct": compose_instruct(d.get("voice"), story.get("tone_voice", ""),
