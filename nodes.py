@@ -36,6 +36,8 @@ class NewsPickStory:
     CATEGORY = "NewsFeed"
 
     def run(self, category, pick_seed, tone, visual, length, shot_seconds, caption):
+        print(f"[NewsFeed] inputs category={category!r} seed={pick_seed} tone={tone} visual={visual} "
+              f"length={length} shot_seconds={shot_seconds} caption={caption}")
         item, paras, media = core.pick_story(category, pick_seed)
         system, user, story = core.build_brief(item, paras, media, pick_seed, tone, visual,
                                                length, shot_seconds, caption)
