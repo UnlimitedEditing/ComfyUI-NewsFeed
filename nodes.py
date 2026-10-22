@@ -171,8 +171,9 @@ class NewsShotRefs:
                 im = Image.fromarray((chars[c].cpu().numpy() * 255).clip(0, 255).astype(np.uint8))
                 tw = max(32, int(round(im.width * ch / im.height / 32.0)) * 32)
                 tiles.append(im.resize((tw, ch), Image.LANCZOS))
-            board = Image.new("RGB", (sum(t.width for t in tiles), ch), (255, 255, 255))
-            x = 0
+            bw = max(sum(t.width for t in tiles), 2 * ch)   # a lone character sits centred on a wide board
+            board = Image.new("RGB", (bw, ch), (255, 255, 255))
+            x = (bw - sum(t.width for t in tiles)) // 2
             for t in tiles:
                 board.paste(t, (x, 0))
                 x += t.width

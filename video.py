@@ -255,6 +255,7 @@ def compile_video(plan, gen_images, audios, out_path, work):
     sc = min(1.0, W / 1280)
     vertical = H > W
     mode = int(plan["story"].get("caption", 1))
+    pad = float(plan.get("pad", PAD))
     report, seg_inputs = [], []
     gi = 0
     sr_out = audios[0][1] if audios else 24000
@@ -290,7 +291,7 @@ def compile_video(plan, gen_images, audios, out_path, work):
     def render(i):
         s = shots[i]
         samples, sr = audios[i] if i < len(audios) else (np.zeros(int(sr_out * 2), np.float32), sr_out)
-        dur = len(samples) / sr + PAD
+        dur = len(samples) / sr + pad
         n = max(2, round(dur * FPS))
         path, source, lt = pics[i]
         seg = os.path.join(work, f"seg{i}.mp4")
@@ -306,7 +307,7 @@ def compile_video(plan, gen_images, audios, out_path, work):
             last, k = f"v{k}", k + 1
         if mode:
             big = mode == 3
-            for j, (txt, a, b) in enumerate(chunk_windows(s["line"], mode, dur - PAD)):
+            for j, (txt, a, b) in enumerate(chunk_windows(s["line"], mode, dur - pad)):
                 p = os.path.join(work, f"cap{i}_{j}.png")
                 w_, h_ = caption_png(txt, p, size=int((72 if big else 46) * sc), max_w=int(0.86 * W), bold=big)
                 cmd += ["-i", p]

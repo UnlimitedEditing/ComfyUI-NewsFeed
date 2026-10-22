@@ -25,7 +25,7 @@ import re
 from . import core
 
 SPEAKERS = ["Ryan", "Aiden", "Serena", "Vivian", "Uncle_Fu", "Dylan", "Eric"]
-MAX_SHOTS = 8
+MAX_SHOTS = 12
 MAX_CAST = 3
 CAMERAS = {"push-in": "slow push-in", "pull-out": "slow pull-out", "pan left": "pan left",
            "pan right": "pan right", "tilt up": "tilt up", "drift": "static with subtle drift"}
@@ -164,5 +164,5 @@ def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1
             "story": {"title": title or "Story", "link": "", "caption": int(caption),
                       "caption_mode": pre["caption"][str(int(caption))], "out_size": [out_w, out_h],
                       "gen_size": [w, h], "seed": int(seed)},
-            "spare_image": False}
+            "spare_image": False, "pad": 0.12}
     return plan, ref_prompts, ref_seeds, shot_prompts, shot_seeds, lines, instructs, speakers
