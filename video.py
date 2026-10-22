@@ -33,10 +33,10 @@ def shot_lists(result):
     gen = tuple(fmt["gen"])
     shots = result["shots"]
     gen_shots = [s for s in shots if s["media_id"] is None]
-    head = core.headline(story["title"])
+    head = result.get("headline") or core.headline(story["title"], 48)
     prompts, seeds = [], []
     for k, s in enumerate(gen_shots):
-        cap = s["image_prompt"] or (story["visual_prefix"] + story["title"])
+        cap = s["image_prompt"] or (story["visual_prefix"] + s["line"])
         # the first drawn still carries the headline as real lettering; the rest are text-free
         prompts.append(core.layout_prompt(cap if k == 0 else cap + ", no text, no lettering, no logos", fmt,
                                           gen, text=head if k == 0 else None))

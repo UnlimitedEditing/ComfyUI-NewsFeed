@@ -254,8 +254,9 @@ def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, ca
         f"TONE: {tn['script']}\n"
         "Use only facts from the source. Do not invent quotes, names or numbers.\n"
         f"AVAILABLE ARTICLE IMAGES:\n{mblock}\n"
-        f'Output JSON: {{"narration": str, "shots": [exactly {nshots} x '
+        f'Output JSON: {{"headline": str, "narration": str, "shots": [exactly {nshots} x '
         '{"line": str, "media_id": str|null, "image_prompt": str|null}]}.\n'
+        "headline is a punchy on-screen title of at most 6 words, no quotes.\n"
         f"The shots' lines, in order, are the narration split into spoken parts, each about {max(8, words // nshots)} words. "
         "If a line is about what an article image shows (its subject, person or place), set media_id to that "
         "image and image_prompt to null. Never use an image for a line it does not depict; use each at most once. "
@@ -335,13 +336,15 @@ def finish_script(llm_text, story):
             mid = None
         prompt = (s.get("image_prompt") or "").strip()
         if mid is None:
-            prompt = story["visual_prefix"] + (prompt or story["title"])
+            # never fall back to the title: MOSS draws any words it is given as lettering
+            prompt = story["visual_prefix"] + (prompt or (s.get("line") or "a scene from the story").strip())
         shots.append({"line": repair_text((s.get("line") or "").strip(), story.get("source", "")), "media_id": mid,
                       "media": byid.get(mid), "image_prompt": prompt if mid is None else None,
                       "camera": story["cameras"][i] if i < len(story["cameras"]) else "static with subtle drift",
                       "seed": story["seed"] + i, "seconds": story["shot_seconds"]})
     narration = repair_text((d.get("narration") or " ".join(s["line"] for s in shots)).strip(), story.get("source", ""))
-    return {"ok": bool(shots), "warnings": warnings,
+    hl = " ".join(re.sub(r'["“”]', "", str(d.get("headline") or "")).split()[:8])
+    return {"ok": bool(shots), "warnings": warnings, "headline": hl,
             "narration": narration, "shots": shots,
             "story": {k: v for k, v in story.items() if k not in ("media", "cameras", "source")}}
 
