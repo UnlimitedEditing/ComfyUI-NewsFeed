@@ -86,7 +86,7 @@ def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1
         elif cur is not None:
             cur[k] = v if k not in cur else cur[k] + " " + v
     if not locs:
-        raise ValueError("no LOCATION lines: define each place as 'LOCATION id: description'")
+        raise ValueError("no LOCATION lines: define each place as LOCATION id: description. Received %d chars: %r" % (len(text or ""), (text or "")[:200]))
     if len(chars) + len(locs) > 6:
         warnings.append(f"{len(chars)} characters + {len(locs)} locations: each costs a picture, trim to save time")
     good = []
