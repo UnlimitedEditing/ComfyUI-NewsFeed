@@ -25,7 +25,7 @@ class NewsPickStory:
             "pick_seed":    ("INT", {"default": 0, "min": 0, "max": 2**31 - 1}),
             "tone":         ("INT", {"default": 0, "min": 0, "max": 5}),
             "visual":       ("INT", {"default": 0, "min": 0, "max": 4}),
-            "length":       ("INT", {"default": 36, "min": 15, "max": 120}),
+            "length":       ("INT", {"default": 48, "min": 15, "max": 120}),
             "shot_seconds": ("INT", {"default": 6, "min": 3, "max": 15}),
             "caption":      ("INT", {"default": 1, "min": 0, "max": 3}),
             "format":       ("INT", {"default": 0, "min": 0, "max": 2}),

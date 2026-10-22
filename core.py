@@ -149,7 +149,7 @@ SYSTEM_PROMPT = ("You write short-video scripts from news articles. "
                  "Respond with valid JSON only, no prose, no markdown fences.")
 
 
-MAX_SHOTS = 6   # time budget: every shot costs one MOSS still
+MAX_SHOTS = 8   # time budget: every shot costs one MOSS still (6 shots + 6 steps measured at 52 s total)
 
 # format code -> generated-still size, output video size, safe regions (0-1000 [y0, x0, y1, x1])
 FORMATS = {
