@@ -26,7 +26,7 @@ KOKORO_FILES = ("kokoro-v1.0.onnx", "voices-v1.0.bin")
 # ── shot lists ────────────────────────────────────────────────────────────────
 
 def shot_lists(result):
-    """result: dict from core.finish_script. Returns (layout prompts, seeds, lines, plan, width, height)."""
+    """result: dict from core.finish_script. Returns (layout prompts, seeds, lines, plan, width, height, instructs)."""
     if not result.get("ok") or not result.get("shots"):
         raise RuntimeError(f"script step failed: {result.get('error') or result.get('warnings')}")
     story = result["story"]
@@ -48,8 +48,9 @@ def shot_lists(result):
         seeds = [story["seed"]]
         spare = True
     lines = [s["line"] or "." for s in shots]
+    instructs = [s.get("instruct") or story.get("tone_voice", "") for s in shots]
     plan = dict(result, spare_image=spare)
-    return prompts, seeds, lines, plan, gen[0], gen[1]
+    return prompts, seeds, lines, plan, gen[0], gen[1], instructs
 
 
 # ── Kokoro ────────────────────────────────────────────────────────────────────

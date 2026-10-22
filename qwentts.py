@@ -27,19 +27,42 @@ def load_model(size):
     return _MODELS[size]
 
 
-def generate(texts, instructs, speaker, size, language, seed):
-    """Returns (list of float32 mono arrays, sample_rate)."""
+def _gen_batch(model, texts, instructs, speaker, language):
+    n = len(texts)
+    return model.generate_custom_voice(
+        text=list(texts), language=[language] * n, speaker=[speaker] * n, instruct=list(instructs))
+
+
+def generate(texts, instructs, speaker, size, language, seed, batch=8):
+    """Returns (list of float32 mono arrays, sample_rate). Lines go through in batches of `batch`; if a batch fails
+    (e.g. out of memory) it is retried in halves, down to single lines."""
     model = load_model(size)
     n = len(texts)
     instructs = (list(instructs) + [""] * n)[:n]
     if seed:
         torch.manual_seed(int(seed))
     t = time.time()
-    wavs, sr = model.generate_custom_voice(
-        text=list(texts), language=[language] * n, speaker=[speaker] * n, instruct=instructs)
+    out, sr = [None] * n, 24000
+
+    def run(idx):
+        nonlocal sr
+        try:
+            wavs, sr = _gen_batch(model, [texts[i] for i in idx], [instructs[i] for i in idx], speaker, language)
+            for i, w in zip(idx, wavs):
+                out[i] = np.asarray(w.detach().cpu().numpy() if hasattr(w, "detach") else w,
+                                    dtype=np.float32).reshape(-1)
+        except Exception as e:
+            if len(idx) == 1:
+                raise
+            print(f"[NewsFeed] qwen-tts batch of {len(idx)} failed ({str(e)[:80]}); retrying in halves")
+            torch.cuda.empty_cache()
+            mid = len(idx) // 2
+            run(idx[:mid])
+            run(idx[mid:])
+
+    for s in range(0, n, batch):
+        run(list(range(s, min(n, s + batch))))
     took = time.time() - t
-    out = [np.asarray(w.detach().cpu().numpy() if hasattr(w, "detach") else w, dtype=np.float32).reshape(-1)
-           for w in wavs]
     audio_s = sum(len(w) for w in out) / sr
     print(f"[NewsFeed] qwen-tts generated {n} lines, {audio_s:.1f}s of speech in {took:.1f}s "
           f"(compute per second of speech = {took / max(audio_s, 0.01):.2f})")

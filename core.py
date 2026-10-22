@@ -240,7 +240,8 @@ def headline(title, limit=48):
     return " ".join(words)
 
 
-def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, caption, fmt=0, max_shots=MAX_SHOTS):
+def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, caption, fmt=0, max_shots=MAX_SHOTS,
+                energy=1):
     pre = load_json("presets.json")
     tn, vs = pre["tone"][str(tone)], pre["visual"][str(visual)]
     fm = FORMATS.get(int(fmt), FORMATS[0])
@@ -264,9 +265,13 @@ def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, ca
         f"TONE: {tn['script']}\n"
         "Use only facts from the source. Do not invent quotes, names or numbers.\n"
         f"AVAILABLE ARTICLE IMAGES:\n{mblock}\n"
-        f'Output JSON: {{"headline": str, "narration": str, "shots": [exactly {nshots} x '
-        '{"line": str, "media_id": str|null, "image_prompt": str|null}]}.\n'
+        f'Output JSON: {{"headline": str, "voice": str, "narration": str, "shots": [exactly {nshots} x '
+        '{"line": str, "delivery": str, "media_id": str|null, "image_prompt": str|null}]}.\n'
         "headline is a punchy on-screen title of at most 6 words, no quotes.\n"
+        "voice is ONE sentence directing how a narrator should read the whole piece, matching the tone "
+        "(e.g. 'a clear, steady news presenter'). delivery is a short note, at most 10 words, for how to perform "
+        "that one line, e.g. 'excited, brisk', 'calm and serious', 'pause, then lower and gentle'. Vary the delivery "
+        "to suit what each line says; use plain words, no brackets.\n"
         "If the story is about a death, disaster, crime or tragedy, ignore the tone above and narrate "
         "respectfully and calmly, with no jokes, hype or exclamations.\n"
         f"The shots' lines, in order, are the narration split into spoken parts, each about {max(8, words // nshots)} words. "
@@ -280,6 +285,8 @@ def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, ca
         "sfx": tn["sfx"], "caption_mode": pre["caption"][str(caption)], "caption": caption, "seed": seed,
         "length": length, "shot_seconds": shot_seconds, "cameras": cams, "nshots": nshots,
         "source": "\n".join(src)[:MAX_SOURCE_CHARS], "format": int(fmt), "format_name": fm["name"], "gen_size": list(fm["gen"]), "out_size": list(fm["out"]),
+        "tone_voice": tn.get("voice", ""), "energy": int(energy),
+        "energy_note": pre.get("energy", {}).get(str(int(energy)), ""),
     }
     return SYSTEM_PROMPT, user, story
 
@@ -302,7 +309,7 @@ def salvage_llm_json(text):
     fixed = re.sub(r",\s*([}\]])", r"\1", t)                      # trailing commas
     fixed = re.sub(r"}\s*{", "},{", fixed)                        # missing comma between objects
     fixed = re.sub(r'"\s*\n\s*"', '",\n"', fixed)                 # missing comma between string fields
-    fixed = re.sub(r'("|null|\d)\s+("(?:line|media_id|image_prompt)")', r"\1, \2", fixed)
+    fixed = re.sub(r'("|null|\d)\s+("(?:line|delivery|media_id|image_prompt)")', r"\1, \2", fixed)
     try:
         a, b = fixed.find("{"), fixed.rfind("}")
         return json.loads(fixed[a:b + 1])
@@ -314,12 +321,32 @@ def salvage_llm_json(text):
         rest = m.group(2)
         mid = re.search(r'"media_id"\s*:\s*(?:"(M\d+)"|null)', rest)
         ip = re.search(r'"image_prompt"\s*:\s*' + S, rest)
+        dl = re.search(r'"delivery"\s*:\s*' + S, m.group(0))
         shots.append({"line": m.group(1).replace('\\"', '"'),
+                      "delivery": dl.group(1).replace('\\"', '"') if dl else "",
                       "media_id": mid.group(1) if mid else None,
                       "image_prompt": ip.group(1).replace('\\"', '"') if ip else None})
     nar = re.search(r'"narration"\s*:\s*' + S, t)
-    return {"narration": nar.group(1) if nar else "", "shots": shots}
+    vo = re.search(r'"voice"\s*:\s*' + S, t)
+    return {"narration": nar.group(1) if nar else "", "voice": vo.group(1) if vo else "", "shots": shots}
 
+
+
+def _plain(s, limit):
+    s = re.sub(r"[\[\]{}<>|\\]", " ", str(s or ""))
+    return re.sub(r"\s+", " ", s).strip()[:limit].rstrip(" ,;")
+
+
+def compose_instruct(voice, tone_voice, energy_note, delivery):
+    """Natural-language direction for Qwen3-TTS: overall voice, energy, then this line's own delivery note."""
+    overall = _plain(voice, 140)
+    if len(overall) < 12:
+        overall = tone_voice
+    parts = [overall.rstrip(".") + "." if overall else "", energy_note]
+    d = _plain(delivery, 100)
+    if d:
+        parts.append(f"For this line: {d}.")
+    return " ".join(p for p in parts if p)
 
 
 def finish_script(llm_text, story):
@@ -351,12 +378,14 @@ def finish_script(llm_text, story):
             # never fall back to the title: MOSS draws any words it is given as lettering
             prompt = story["visual_prefix"] + (prompt or (s.get("line") or "a scene from the story").strip())
         shots.append({"line": repair_text((s.get("line") or "").strip(), story.get("source", "")), "media_id": mid,
+                      "instruct": compose_instruct(d.get("voice"), story.get("tone_voice", ""),
+                                                   story.get("energy_note", ""), s.get("delivery")),
                       "media": byid.get(mid), "image_prompt": prompt if mid is None else None,
                       "camera": story["cameras"][i] if i < len(story["cameras"]) else "static with subtle drift",
                       "seed": story["seed"] + i, "seconds": story["shot_seconds"]})
     narration = repair_text((d.get("narration") or " ".join(s["line"] for s in shots)).strip(), story.get("source", ""))
     hl = " ".join(re.sub(r'["“”]', "", str(d.get("headline") or "")).split()[:8])
-    return {"ok": bool(shots), "warnings": warnings, "headline": hl,
+    return {"ok": bool(shots), "warnings": warnings, "headline": hl, "voice": _plain(d.get("voice"), 140),
             "narration": narration, "shots": shots,
             "story": {k: v for k, v in story.items() if k not in ("media", "cameras", "source")}}
 
