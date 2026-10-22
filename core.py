@@ -181,7 +181,7 @@ def layout_prompt(caption, regions, gen_size, text=None):
                        "bbox_format": "yxyx"}, ensure_ascii=False, separators=(",", ":"))
 
 
-def headline(title, limit=64):
+def headline(title, limit=90):
     t = re.sub(r"\s+", " ", title).strip()
     if len(t) <= limit:
         return t

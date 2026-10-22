@@ -37,7 +37,7 @@ def shot_lists(result):
     for k, s in enumerate(gen_shots):
         cap = s["image_prompt"] or (story["visual_prefix"] + story["title"])
         # the first drawn still carries the headline as real lettering; the rest are text-free
-        prompts.append(core.layout_prompt(cap if k == 0 else cap + ", no text, no lettering", fmt,
+        prompts.append(core.layout_prompt(cap if k == 0 else cap + ", no text, no lettering, no logos", fmt,
                                           gen, text=head if k == 0 else None))
         seeds.append(s["seed"])
     spare = False
