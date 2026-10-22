@@ -140,6 +140,15 @@ class NewsShotRefs:
     FUNCTION = "run"
     CATEGORY = "NewsFeed"
 
+    @staticmethod
+    def _fit(t, w, h):
+        """Cover-crop a picture to w x h: the shot edit takes its size from its location picture."""
+        from PIL import Image
+        im = Image.fromarray((t.cpu().numpy() * 255).clip(0, 255).astype(np.uint8))
+        if im.size != (w, h):
+            im = video.cover_crop(im, w, h)
+        return torch.from_numpy(np.asarray(im, dtype=np.float32) / 255.0)
+
     def run(self, plan_json, refs):
         from PIL import Image
         plan = json.loads(plan_json[0])
@@ -149,9 +158,10 @@ class NewsShotRefs:
         nc = plan["n_chars"]
         chars, locs = imgs[:nc], imgs[nc:]
         ch = 512
+        gw, gh = plan["story"]["gen_size"]
         loc_out, cast_out = [], []
         for s in plan["shots"]:
-            loc = locs[s["place"]]
+            loc = self._fit(locs[s["place"]], gw, gh)
             loc_out.append(loc.unsqueeze(0))
             if not s["cast"]:
                 cast_out.append(loc.unsqueeze(0))
