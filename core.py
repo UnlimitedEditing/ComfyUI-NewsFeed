@@ -182,7 +182,7 @@ def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, ca
     story = {
         "title": item["title"], "link": item["link"], "category": item["category"],
         "media": media, "tone": tn["name"], "visual": vs["name"], "visual_prefix": vs["prefix"],
-        "sfx": tn["sfx"], "caption_mode": pre["caption"][str(caption)], "seed": seed,
+        "sfx": tn["sfx"], "caption_mode": pre["caption"][str(caption)], "caption": caption, "seed": seed,
         "length": length, "shot_seconds": shot_seconds, "cameras": cams, "nshots": nshots,
     }
     return SYSTEM_PROMPT, user, story

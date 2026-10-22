@@ -4,7 +4,7 @@ import math
 import numpy as np
 import torch
 
-from . import core
+from . import core, video
 
 
 def _data_image(text):
@@ -69,5 +69,96 @@ class NewsFinishScript:
         return (text, _data_image(text))
 
 
-NODE_CLASS_MAPPINGS = {"NewsPickStory": NewsPickStory, "NewsFinishScript": NewsFinishScript}
-NODE_DISPLAY_NAME_MAPPINGS = {"NewsPickStory": "News Pick Story", "NewsFinishScript": "News Finish Script"}
+class NewsShotLists:
+    """Turns the finished script into per-shot lists. Downstream nodes run once per list item."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"result_json": ("STRING", {"forceInput": True})}}
+
+    RETURN_TYPES = ("STRING", "INT", "STRING", "STRING")
+    RETURN_NAMES = ("image_prompts", "seeds", "lines", "plan_json")
+    OUTPUT_IS_LIST = (True, True, True, False)
+    FUNCTION = "run"
+    CATEGORY = "NewsFeed"
+
+    def run(self, result_json):
+        prompts, seeds, lines, plan = video.shot_lists(json.loads(result_json))
+        print(f"[NewsFeed] {len(lines)} lines, {len(prompts)} images to generate (spare={plan['spare_image']})")
+        return (prompts, seeds, lines, json.dumps(plan))
+
+
+class NewsKokoro:
+    """Kokoro-82M (ONNX) text to speech for one line. Run per list item."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "text":  ("STRING", {"forceInput": True}),
+            "voice": ("STRING", {"default": "af_heart"}),
+            "speed": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 1.6, "step": 0.05}),
+        }}
+
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION = "run"
+    CATEGORY = "NewsFeed"
+
+    def run(self, text, voice, speed):
+        samples, sr = video.kokoro_synth(text, voice, speed)
+        wave = torch.from_numpy(samples).reshape(1, 1, -1)
+        print(f"[NewsFeed] kokoro {len(samples) / sr:.2f}s for {len(text)} chars")
+        return ({"waveform": wave, "sample_rate": sr},)
+
+
+class NewsCompile:
+    """Assemble pictures (article photos + generated stills), per-line narration and captions into an mp4."""
+    INPUT_IS_LIST = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "plan_json": ("STRING", {"forceInput": True}),
+            "images":    ("IMAGE",),
+            "audios":    ("AUDIO",),
+        }}
+
+    RETURN_TYPES = ("VIDEO", "STRING", "IMAGE")
+    RETURN_NAMES = ("video", "report", "report_image")
+    FUNCTION = "run"
+    CATEGORY = "NewsFeed"
+
+    async def run(self, plan_json, images, audios):
+        import asyncio
+        # ffmpeg is blocking: keep the event loop alive (a blocked loop can make a finished job report timed_out)
+        return await asyncio.to_thread(self._run_sync, plan_json[0], images, audios)
+
+    def _run_sync(self, plan_json, images, audios):
+        import os
+        import shutil
+        import tempfile
+        from comfy_api.latest import InputImpl
+        plan = json.loads(plan_json)
+        gen = [(im[0].cpu().numpy() * 255.0).clip(0, 255).astype(np.uint8) for im in images]
+        if plan.get("spare_image"):
+            gen = []
+        auds = []
+        for a in audios:
+            w = a["waveform"]
+            auds.append((w.reshape(-1).cpu().numpy().astype(np.float32), int(a["sample_rate"])))
+        work = tempfile.mkdtemp(prefix="newsvideo_")
+        out = os.path.join(tempfile.mkdtemp(prefix="newsvideo_out_"), "news.mp4")
+        info = video.compile_video(plan, gen, auds, out, work)
+        shutil.rmtree(work, ignore_errors=True)
+        info["title"] = plan["story"]["title"]
+        info["link"] = plan["story"]["link"]
+        text = json.dumps(info, ensure_ascii=False, indent=1)
+        print(f"[NewsFeed] compiled {info['seconds']}s: " + ", ".join(s["picture"] for s in info["shots"]))
+        return (InputImpl.VideoFromFile(out), text, _data_image(text))
+
+
+NODE_CLASS_MAPPINGS = {"NewsPickStory": NewsPickStory, "NewsFinishScript": NewsFinishScript,
+                       "NewsShotLists": NewsShotLists, "NewsKokoro": NewsKokoro, "NewsCompile": NewsCompile}
+NODE_DISPLAY_NAME_MAPPINGS = {"NewsPickStory": "News Pick Story", "NewsFinishScript": "News Finish Script",
+                              "NewsShotLists": "News Shot Lists", "NewsKokoro": "News Kokoro TTS",
+                              "NewsCompile": "News Compile"}
