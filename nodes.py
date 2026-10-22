@@ -185,9 +185,35 @@ class NewsMark:
         return (audio,)
 
 
+class NewsGateAudio:
+    """Lazy two-way switch for AUDIO: with enable > 0 it returns `on`, else `off`, and only the chosen branch is
+    ever evaluated (ComfyUI lazy inputs), so an optional edit pass costs nothing when it is switched off."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "enable": ("INT", {"default": 0, "min": 0, "max": 9}),
+            "off": ("AUDIO", {"lazy": True}),
+            "on": ("AUDIO", {"lazy": True}),
+        }}
+
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION = "run"
+    CATEGORY = "NewsFeed"
+
+    def check_lazy_status(self, enable, off=None, on=None):
+        if enable > 0:
+            return ["on"] if on is None else []
+        return ["off"] if off is None else []
+
+    def run(self, enable, off=None, on=None):
+        return ((on if enable > 0 else off),)
+
+
 NODE_CLASS_MAPPINGS = {"NewsPickStory": NewsPickStory, "NewsFinishScript": NewsFinishScript,
                        "NewsShotLists": NewsShotLists, "NewsKokoro": NewsKokoro, "NewsCompile": NewsCompile,
-                       "NewsMark": NewsMark}
+                       "NewsMark": NewsMark, "NewsGateAudio": NewsGateAudio}
 NODE_DISPLAY_NAME_MAPPINGS = {"NewsPickStory": "News Pick Story", "NewsFinishScript": "News Finish Script",
                               "NewsShotLists": "News Shot Lists", "NewsKokoro": "News Kokoro TTS",
-                              "NewsCompile": "News Compile", "NewsMark": "News Mark"}
+                              "NewsCompile": "News Compile", "NewsMark": "News Mark", "NewsGateAudio": "News Gate Audio"}
