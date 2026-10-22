@@ -223,11 +223,21 @@ def layout_prompt(caption, regions, gen_size, text=None):
                        "bbox_format": "yxyx"}, ensure_ascii=False, separators=(",", ":"))
 
 
-def headline(title, limit=90):
+_TRAILING = {"to", "of", "the", "and", "a", "an", "in", "for", "as", "at", "on", "with", "by", "from", "after",
+             "over", "is", "are", "was", "be", "that", "its", "his", "her", "their"}
+
+
+def headline(title, limit=48):
+    """On-screen title from the article title when the LLM gave none: at most 6 words and `limit` chars,
+    never ending on a dangling word like 'to' or 'of'."""
     t = re.sub(r"\s+", " ", title).strip()
-    if len(t) <= limit:
-        return t
-    return t[:limit].rsplit(" ", 1)[0]
+    t = re.split(r"\s[-–—:|]\s", t)[0]       # drop a trailing "- Publisher" part
+    words = t.split()[:6]
+    while len(" ".join(words)) > limit and len(words) > 2:
+        words.pop()
+    while len(words) > 2 and words[-1].lower().strip(".,;:'\"") in _TRAILING:
+        words.pop()
+    return " ".join(words)
 
 
 def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, caption, fmt=0):
@@ -257,6 +267,8 @@ def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, ca
         f'Output JSON: {{"headline": str, "narration": str, "shots": [exactly {nshots} x '
         '{"line": str, "media_id": str|null, "image_prompt": str|null}]}.\n'
         "headline is a punchy on-screen title of at most 6 words, no quotes.\n"
+        "If the story is about a death, disaster, crime or tragedy, ignore the tone above and narrate "
+        "respectfully and calmly, with no jokes, hype or exclamations.\n"
         f"The shots' lines, in order, are the narration split into spoken parts, each about {max(8, words // nshots)} words. "
         "If a line is about what an article image shows (its subject, person or place), set media_id to that "
         "image and image_prompt to null. Never use an image for a line it does not depict; use each at most once. "
