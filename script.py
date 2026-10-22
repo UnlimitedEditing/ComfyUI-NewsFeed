@@ -131,8 +131,9 @@ def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1
             instruct = "Speak as a character in a story."
         if s["cast"]:
             who = "; ".join(f"{c} ({core._plain(chars[c], 160)})" for c in s["cast"])
-            cast_s = f"Image 2 shows the characters, side by side from left to right: {who}. "
             n = len(s["cast"])
+            cast_s = (f"Image 2 shows the one character in this picture: {who}. " if n == 1 else
+                      f"Image 2 shows the characters, side by side from left to right: {who}. ")
             cast_s += (f"There {'is exactly one person' if n == 1 else f'are exactly {n} people'} in the picture, each shown "
                        "once, never duplicated. ")
             with_s = ", with those characters from image 2"
