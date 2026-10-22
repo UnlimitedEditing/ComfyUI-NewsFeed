@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 from . import core
 
 FPS = 30
+MAX_BYTES = int(19 * 1024 * 1024)   # keep the mp4 under 20 MB (Telegram bot download limit)
 SRC_SCALE = 1.5     # source picture size relative to the output; smaller = faster per-frame resize
 PAD = 0.35            # silence after every shot's narration
 
@@ -346,10 +347,22 @@ def compile_video(plan, gen_images, audios, out_path, work):
         wf.setframerate(sr_out)
         wf.writeframes(pcm.tobytes())
     run(["ffmpeg", "-y", "-v", "error", "-i", silent, "-i", wav, "-map", "0:v:0", "-map", "1:a:0",
-         "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", out_path])
+         "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "-shortest", out_path])
 
     total = sum(d for _, d, _ in results)
+    shrunk = False
+    if os.path.getsize(out_path) > MAX_BYTES:
+        # too big: re-encode the picture at a bitrate that fits the byte budget
+        budget = int(MAX_BYTES * 0.93 * 8 / max(total, 1.0)) - 128_000
+        small = os.path.join(work, "small.mp4")
+        run(["ffmpeg", "-y", "-v", "error", "-i", silent, "-i", wav, "-map", "0:v:0", "-map", "1:a:0",
+             "-c:v", "libx264", "-preset", "veryfast", "-b:v", str(max(budget, 150_000)),
+             "-maxrate", str(max(int(budget * 1.15), 170_000)), "-bufsize", str(max(budget * 2, 300_000)),
+             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-shortest", small])
+        shutil.move(small, out_path)
+        shrunk = True
+
     info = {"seconds": round(total, 2), "shots": [{"i": i + 1, "seconds": round(d, 2), "picture": src,
             "line": shots[i]["line"][:80]} for i, (_, d, src) in enumerate(results)], "notes": report,
-            "captions": mode_name}
+            "captions": mode_name, "mb": round(os.path.getsize(out_path) / 1048576, 2), "recompressed": shrunk}
     return info
