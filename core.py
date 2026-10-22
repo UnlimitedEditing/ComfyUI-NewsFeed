@@ -200,13 +200,42 @@ def parse_llm_json(text):
         raise
 
 
+def salvage_llm_json(text):
+    """Small models often emit almost-JSON. Try cheap repairs, then pull shots out with regexes."""
+    t = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip())
+    fixed = re.sub(r",\s*([}\]])", r"\1", t)                      # trailing commas
+    fixed = re.sub(r"}\s*{", "},{", fixed)                        # missing comma between objects
+    fixed = re.sub(r'"\s*\n\s*"', '",\n"', fixed)                 # missing comma between string fields
+    fixed = re.sub(r'("|null|\d)\s+("(?:line|media_id|image_prompt)")', r"\1, \2", fixed)
+    try:
+        a, b = fixed.find("{"), fixed.rfind("}")
+        return json.loads(fixed[a:b + 1])
+    except Exception:
+        pass
+    S = r'"((?:[^"\\]|\\.)*)"'
+    shots = []
+    for m in re.finditer(r'"line"\s*:\s*' + S + r'(.*?)(?="line"|$)', t, re.S):
+        rest = m.group(2)
+        mid = re.search(r'"media_id"\s*:\s*(?:"(M\d+)"|null)', rest)
+        ip = re.search(r'"image_prompt"\s*:\s*' + S, rest)
+        shots.append({"line": m.group(1).replace('\\"', '"'),
+                      "media_id": mid.group(1) if mid else None,
+                      "image_prompt": ip.group(1).replace('\\"', '"') if ip else None})
+    nar = re.search(r'"narration"\s*:\s*' + S, t)
+    return {"narration": nar.group(1) if nar else "", "shots": shots}
+
+
+
 def finish_script(llm_text, story):
     """Validate/repair the LLM output and merge with the story plan into one job result."""
     warnings = []
     try:
         d = parse_llm_json(llm_text)
     except Exception as e:
-        return {"ok": False, "error": f"LLM output was not JSON: {e}", "raw": llm_text[:2000], "story": story}
+        d = salvage_llm_json(llm_text)
+        if not d or not d.get("shots"):
+            return {"ok": False, "error": f"LLM output was not JSON: {e}", "raw": llm_text[:2000], "story": story}
+        warnings.append(f"JSON was malformed ({e}); salvaged {len(d['shots'])} shots")
     shots_in = d.get("shots") or []
     n = story["nshots"]
     if len(shots_in) != n:
