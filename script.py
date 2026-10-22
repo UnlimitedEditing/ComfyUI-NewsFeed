@@ -212,9 +212,9 @@ def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1
                  + core._plain(s.get("SCENE") or s["ACTION"], 400).rstrip(".") + "." + NO_TEXT)
         if s.get("objects"):
             layouts.append(explicit_layout(scene, s["objects"], chars, gen_size))
-            continue
-        layouts.append(moss_layout(scene, [core._plain(chars[c], 400) + ", no text" for c in s["cast"]],
-                                   s["ACTION"], gen_size, i))
+        else:
+            layouts.append(moss_layout(scene, [core._plain(chars[c], 400) + ", no text" for c in s["cast"]],
+                                       s["ACTION"], gen_size, i))
         shot_seeds.append(int(seed) + i)
         line = core._plain(s["SAY"], 600) or "."
         lines.append(line)
