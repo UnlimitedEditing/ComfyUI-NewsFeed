@@ -29,6 +29,7 @@ class NewsPickStory:
             "shot_seconds": ("INT", {"default": 6, "min": 3, "max": 15}),
             "caption":      ("INT", {"default": 1, "min": 0, "max": 3}),
             "format":       ("INT", {"default": 0, "min": 0, "max": 2}),
+            "query":        ("STRING", {"default": ""}),
         }}
 
     RETURN_TYPES = ("STRING", "STRING", "STRING")
@@ -36,10 +37,10 @@ class NewsPickStory:
     FUNCTION = "run"
     CATEGORY = "NewsFeed"
 
-    def run(self, category, pick_seed, tone, visual, length, shot_seconds, caption, format):
+    def run(self, category, pick_seed, tone, visual, length, shot_seconds, caption, format, query):
         print(f"[NewsFeed] inputs category={category!r} seed={pick_seed} tone={tone} visual={visual} "
-              f"length={length} shot_seconds={shot_seconds} caption={caption} format={format}")
-        item, paras, media = core.pick_story(category, pick_seed)
+              f"length={length} shot_seconds={shot_seconds} caption={caption} format={format} query={query!r}")
+        item, paras, media = core.pick_story(category, pick_seed, query=query)
         system, user, story = core.build_brief(item, paras, media, pick_seed, tone, visual,
                                                length, shot_seconds, caption, format)
         print(f"[NewsFeed] picked [{item['category']}] {item['title']} "

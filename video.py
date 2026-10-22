@@ -14,7 +14,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 from . import core
 
-FPS = 24
+FPS = 30
+SRC_SCALE = 1.5     # source picture size relative to the output; smaller = faster per-frame resize
 PAD = 0.35            # silence after every shot's narration
 
 KOKORO_BASE = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
@@ -81,11 +82,17 @@ def kokoro_synth(text, voice, speed, lang="en-us"):
 
 # ── captions (PIL overlays, no libass/fontconfig dependency) ──────────────────
 
-def _font(size):
+def _font(size, bold=True):
+    """DejaVu Sans ships in fonts/ (free licence): it covers £ € é and the like, which PIL's bundled
+    default font does not (those draw as empty boxes)."""
+    path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf")
     try:
-        return ImageFont.load_default(size=size)
-    except TypeError:
-        return ImageFont.load_default()
+        return ImageFont.truetype(path, size)
+    except Exception:
+        try:
+            return ImageFont.load_default(size=size)
+        except TypeError:
+            return ImageFont.load_default()
 
 
 def _wrap(draw, text, font, max_w):
@@ -181,34 +188,51 @@ def download_image(url, path):
 
 
 def title_card(title, path, W=1280, H=720):
-    img = Image.new("RGB", (2 * W, 2 * H), (18, 22, 30))
+    img = Image.new("RGB", (int(SRC_SCALE * W), int(SRC_SCALE * H)), (18, 22, 30))
     d = ImageDraw.Draw(img)
     font = _font(120)
-    y = H - 220
-    for ln in _wrap(d, title, font, int(1.6 * W)):
+    y = int(SRC_SCALE * H / 2) - 150
+    for ln in _wrap(d, title, font, int(1.2 * W)):
         tw = d.textlength(ln, font=font)
-        d.text(((2 * W - tw) / 2, y), ln, font=font, fill=(235, 235, 235))
+        d.text(((img.width - tw) / 2, y), ln, font=font, fill=(235, 235, 235))
         y += 150
     img.save(path)
 
 
-def zoompan(camera, n, W, H):
-    c = "(iw-iw/zoom)/2"
-    cy = "(ih-ih/zoom)/2"
-    z, x, y = "1.12", c, cy
+def _ease(t):
+    """smoothstep: gentle start and stop, so the move reads as a camera, not a slideshow."""
+    return t * t * (3.0 - 2.0 * t)
+
+
+def camera_box(camera, t, sw, sh):
+    """Crop window (x0, y0, x1, y1) in FLOAT source pixels for progress t in 0..1.
+    Sub-pixel boxes + PIL's box-resize avoid the whole-pixel snapping that makes ffmpeg zoompan jitter."""
+    e = _ease(t)
+    z, xf, yf = 1.12, 0.5, 0.5
     if camera == "slow push-in":
-        z = f"min(1.0+0.14*on/{n},1.14)"
+        z = 1.0 + 0.14 * e
     elif camera == "slow pull-out":
-        z = f"max(1.14-0.14*on/{n},1.0)"
+        z = 1.14 - 0.14 * e
     elif camera == "pan left":
-        x = f"(iw-iw/zoom)*(1-on/{n})"
+        xf = 1.0 - e
     elif camera == "pan right":
-        x = f"(iw-iw/zoom)*on/{n}"
+        xf = e
     elif camera == "tilt up":
-        y = f"(ih-ih/zoom)*(1-on/{n})"
+        yf = 1.0 - e
     else:
-        z = f"1.03+0.03*on/{n}"
-    return f"zoompan=z='{z}':x='{x}':y='{y}':d={n}:s={W}x{H}:fps={FPS}"
+        z = 1.03 + 0.03 * e
+    cw, ch = sw / z, sh / z
+    x0 = min(max((sw - cw) * xf, 0.0), max(sw - cw, 0.0))   # clamp: float error can land a hair outside the source
+    y0 = min(max((sh - ch) * yf, 0.0), max(sh - ch, 0.0))
+    return (x0, y0, min(x0 + cw, float(sw)), min(y0 + ch, float(sh)))
+
+
+def render_motion(src_path, camera, n, W, H, proc):
+    """Stream n sub-pixel-accurate frames of a slow camera move to ffmpeg's stdin."""
+    src = Image.open(src_path).convert("RGB")
+    for k in range(n):
+        box = camera_box(camera, k / max(1, n - 1), src.width, src.height)
+        proc.stdin.write(src.resize((W, H), Image.BILINEAR, box=box).tobytes())
 
 
 def run(cmd):
@@ -240,7 +264,7 @@ def compile_video(plan, gen_images, audios, out_path, work):
         if s["media_id"] and s.get("media"):
             try:
                 raw = download_image(s["media"]["url"], os.path.join(work, f"raw{i}"))
-                cover_crop(Image.open(raw).convert("RGB"), 2 * W, 2 * H).save(path)
+                cover_crop(Image.open(raw).convert("RGB"), int(SRC_SCALE * W), int(SRC_SCALE * H)).save(path)
                 source = f"article {s['media_id']}"
                 lt = (s["media"].get("caption") or s["media"].get("alt") or "")[:140] or None
             except Exception as e:
@@ -248,7 +272,7 @@ def compile_video(plan, gen_images, audios, out_path, work):
                 s = dict(s, media_id=None)
         if source == "generated":
             if gi < len(gen_images):
-                cover_crop(Image.fromarray(gen_images[gi]).convert("RGB"), 2 * W, 2 * H).save(path)
+                cover_crop(Image.fromarray(gen_images[gi]).convert("RGB"), int(SRC_SCALE * W), int(SRC_SCALE * H)).save(path)
                 gi += 1
             else:
                 title_card(plan["story"]["title"], path, W, H)
@@ -262,8 +286,9 @@ def compile_video(plan, gen_images, audios, out_path, work):
         n = max(2, round(dur * FPS))
         path, source, lt = pics[i]
         seg = os.path.join(work, f"seg{i}.mp4")
-        cmd = ["ffmpeg", "-y", "-v", "error", "-i", path]
-        filt = [f"[0:v]{zoompan(s['camera'], n, W, H)},format=yuv420p[v0]"]
+        cmd = ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
+               "-r", str(FPS), "-i", "-"]
+        filt = ["[0:v]format=yuv420p[v0]"]
         last, k = "v0", 1
         if lt:
             p = os.path.join(work, f"lt{i}.png")
@@ -281,12 +306,24 @@ def compile_video(plan, gen_images, audios, out_path, work):
                 filt.append(f"[{last}][{k}:v]overlay=x=(main_w-overlay_w)/2:y={y}:"
                             f"enable='between(t,{a:.2f},{b:.2f})':format=auto[v{k}]")
                 last, k = f"v{k}", k + 1
-        cmd += ["-filter_complex", ";".join(filt), "-map", f"[{last}]", "-t", f"{dur:.3f}", "-r", str(FPS),
+        cmd += ["-filter_complex", ";".join(filt), "-map", f"[{last}]", "-r", str(FPS),
                 "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p", "-an", seg]
-        run(cmd)
+        logf = open(os.path.join(work, f"ff{i}.log"), "wb")
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=logf, stderr=logf)
+        try:
+            render_motion(path, s["camera"], n, W, H, proc)
+        finally:
+            try:
+                proc.stdin.close()
+            except Exception:
+                pass
+        rc = proc.wait()
+        logf.close()
+        if rc:
+            raise RuntimeError(f"ffmpeg segment {i} failed: " + open(os.path.join(work, f"ff{i}.log")).read()[-600:])
         return seg, dur, source
 
-    with ThreadPoolExecutor(max_workers=3) as ex:
+    with ThreadPoolExecutor(max_workers=4) as ex:
         results = list(ex.map(render, range(len(shots))))
 
     lst = os.path.join(work, "list.txt")

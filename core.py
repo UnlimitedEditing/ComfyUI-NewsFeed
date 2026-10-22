@@ -118,31 +118,73 @@ def fetch_article(link):
     return pp.paras, media
 
 
-def pick_story(category, seed, tries=6):
-    """Seeded pick among live feed items; skips stubs. Returns (item, paras, media)."""
-    cfg = load_json("feeds.json")["feeds"]
-    cat = (category or "").strip().lower()
-    feeds = [f for f in cfg if cat in ("", "any", f["category"])]
-    if not feeds:
-        raise ValueError(f"unknown category '{category}'. have: {sorted({f['category'] for f in cfg})}")
-    items, errs = [], []
-    for f in feeds:
-        try:
-            items += read_feed(f["url"], f["category"])
-        except Exception as e:
-            errs.append(f"{f['category']}: {e}")
-    if not items:
-        raise RuntimeError("no feed items fetched: " + "; ".join(errs))
-    items.sort(key=lambda x: x["link"])           # stable order so seed -> same pick while feed unchanged
+def bing_news(query, limit=15):
+    """Topic search via Bing News RSS (no key). Links are click-trackers; the real URL is in `url=`."""
+    from urllib.parse import parse_qs, quote_plus, unquote, urlparse
+    root = ET.fromstring(get("https://www.bing.com/news/search?q=" + quote_plus(query) + "&format=rss&setlang=en", 20))
+    out = []
+    for it in root.iter("item"):
+        link = it.findtext("link") or ""
+        real = parse_qs(urlparse(link).query).get("url", [link])[0]
+        real = unquote(real)
+        if not real.startswith("http") or SKIP_LINK.search(real):
+            continue
+        out.append({"category": "search", "title": clean(it.findtext("title")),
+                    "summary": clean(it.findtext("description")), "link": real})
+    return out[:limit]
+
+
+def pick_story(category, seed, tries=8, query=""):
+    """Seeded pick among live items (RSS feeds, or a Bing News search when `query` is given);
+    skips stubs and unreadable pages. Returns (item, paras, media)."""
+    errs = []
+    if (query or "").strip():
+        items = bing_news(query.strip())
+        if not items:
+            raise RuntimeError(f"no news found for '{query.strip()}'")
+    else:
+        cfg = load_json("feeds.json")["feeds"]
+        cat = (category or "").strip().lower()
+        feeds = [f for f in cfg if cat in ("", "any", f["category"])]
+        if not feeds:
+            raise ValueError(f"unknown category '{category}'. have: {sorted({f['category'] for f in cfg})}")
+        items = []
+        for f in feeds:
+            try:
+                items += read_feed(f["url"], f["category"])
+            except Exception as e:
+                errs.append(f"{f['category']}: {e}")
+        if not items:
+            raise RuntimeError("no feed items fetched: " + "; ".join(errs))
+    items.sort(key=lambda x: x["link"])           # stable order so seed -> same pick while the feed is unchanged
     random.Random(seed).shuffle(items)
     for it in items[:tries]:
         try:
             paras, media = fetch_article(it["link"])
-        except Exception:
+        except Exception as e:
+            errs.append(f"{it['link'][:50]}: {str(e)[:60]}")
             continue
         if len("\n".join(paras)) >= MIN_BODY:
             return it, paras, media
-    raise RuntimeError(f"no usable article in {tries} tries ({'; '.join(errs)})")
+    what = f"for '{query.strip()}' " if (query or "").strip() else ""
+    raise RuntimeError(f"no readable article {what}in {tries} tries ({'; '.join(errs[:4])})")
+
+
+def repair_text(text, source):
+    """Small LLMs sometimes emit U+FFFD for a currency sign or apostrophe. Recover the real character from the
+    article where possible, else fall back to an apostrophe (word-internal) or nothing."""
+    if "�" not in text:
+        return text
+
+    def fix(m):
+        ctx = m.group(1)
+        if ctx:
+            hit = re.search(r"([^\x00-\x7f])" + re.escape(ctx[:5]), source or "")
+            if hit:
+                return hit.group(1) + ctx
+        before = text[:m.start()]
+        return ("'" if before[-1:].isalpha() else "") + ctx
+    return re.sub(r"�(\S{0,6})", fix, text)
 
 
 SYSTEM_PROMPT = ("You write short-video scripts from news articles. "
@@ -224,7 +266,7 @@ def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, ca
         "media": media, "tone": tn["name"], "visual": vs["name"], "visual_prefix": vs["prefix"],
         "sfx": tn["sfx"], "caption_mode": pre["caption"][str(caption)], "caption": caption, "seed": seed,
         "length": length, "shot_seconds": shot_seconds, "cameras": cams, "nshots": nshots,
-        "format": int(fmt), "format_name": fm["name"], "gen_size": list(fm["gen"]), "out_size": list(fm["out"]),
+        "source": "\n".join(src)[:MAX_SOURCE_CHARS], "format": int(fmt), "format_name": fm["name"], "gen_size": list(fm["gen"]), "out_size": list(fm["out"]),
     }
     return SYSTEM_PROMPT, user, story
 
@@ -294,14 +336,14 @@ def finish_script(llm_text, story):
         prompt = (s.get("image_prompt") or "").strip()
         if mid is None:
             prompt = story["visual_prefix"] + (prompt or story["title"])
-        shots.append({"line": (s.get("line") or "").strip(), "media_id": mid,
+        shots.append({"line": repair_text((s.get("line") or "").strip(), story.get("source", "")), "media_id": mid,
                       "media": byid.get(mid), "image_prompt": prompt if mid is None else None,
                       "camera": story["cameras"][i] if i < len(story["cameras"]) else "static with subtle drift",
                       "seed": story["seed"] + i, "seconds": story["shot_seconds"]})
-    narration = (d.get("narration") or " ".join(s["line"] for s in shots)).strip()
+    narration = repair_text((d.get("narration") or " ".join(s["line"] for s in shots)).strip(), story.get("source", ""))
     return {"ok": bool(shots), "warnings": warnings,
             "narration": narration, "shots": shots,
-            "story": {k: v for k, v in story.items() if k not in ("media", "cameras")}}
+            "story": {k: v for k, v in story.items() if k not in ("media", "cameras", "source")}}
 
 
 def encode_string_bytes(text):
