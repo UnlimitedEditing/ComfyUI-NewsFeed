@@ -159,8 +159,34 @@ class NewsCompile:
         return (InputImpl.VideoFromFile(out), text, _data_image(text))
 
 
+class NewsMark:
+    """Passes AUDIO through unchanged and logs seconds since the ComfyUI process started (the 180 s clock),
+    so a probe workflow can time its stages. Logs as `[NewsFeed] MARK <label> t=<s>`."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"audio": ("AUDIO",), "label": ("STRING", {"default": "mark"})}}
+
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION = "run"
+    CATEGORY = "NewsFeed"
+
+    def run(self, audio, label):
+        import time
+        try:
+            import psutil
+            since = time.time() - psutil.Process().create_time()
+        except Exception:
+            since = -1.0
+        w = audio["waveform"]
+        print(f"[NewsFeed] MARK {label} t={since:.1f}s audio={w.shape[-1] / audio['sample_rate']:.2f}s")
+        return (audio,)
+
+
 NODE_CLASS_MAPPINGS = {"NewsPickStory": NewsPickStory, "NewsFinishScript": NewsFinishScript,
-                       "NewsShotLists": NewsShotLists, "NewsKokoro": NewsKokoro, "NewsCompile": NewsCompile}
+                       "NewsShotLists": NewsShotLists, "NewsKokoro": NewsKokoro, "NewsCompile": NewsCompile,
+                       "NewsMark": NewsMark}
 NODE_DISPLAY_NAME_MAPPINGS = {"NewsPickStory": "News Pick Story", "NewsFinishScript": "News Finish Script",
                               "NewsShotLists": "News Shot Lists", "NewsKokoro": "News Kokoro TTS",
-                              "NewsCompile": "News Compile"}
+                              "NewsCompile": "News Compile", "NewsMark": "News Mark"}
