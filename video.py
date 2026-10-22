@@ -192,12 +192,13 @@ def download_image(url, path):
 def title_card(title, path, W=1280, H=720):
     img = Image.new("RGB", (int(SRC_SCALE * W), int(SRC_SCALE * H)), (18, 22, 30))
     d = ImageDraw.Draw(img)
-    font = _font(120)
-    y = int(SRC_SCALE * H / 2) - 150
-    for ln in _wrap(d, title, font, int(1.2 * W)):
+    font = _font(max(40, int(SRC_SCALE * W / 16)))
+    lines = _wrap(d, core.headline(title, 70), font, int(0.8 * SRC_SCALE * W))[:3]
+    y = int(SRC_SCALE * H / 2) - int(len(lines) * font.size * 0.7)
+    for ln in lines:
         tw = d.textlength(ln, font=font)
         d.text(((img.width - tw) / 2, y), ln, font=font, fill=(235, 235, 235))
-        y += 150
+        y += int(font.size * 1.4)
     img.save(path)
 
 
@@ -276,6 +277,11 @@ def compile_video(plan, gen_images, audios, out_path, work):
             if gi < len(gen_images):
                 cover_crop(Image.fromarray(gen_images[gi]).convert("RGB"), int(SRC_SCALE * W), int(SRC_SCALE * H)).save(path)
                 gi += 1
+            elif gen_images:
+                # an article photo failed to download: reuse a drawn still rather than show a bare title card
+                cover_crop(Image.fromarray(gen_images[i % len(gen_images)]).convert("RGB"),
+                           int(SRC_SCALE * W), int(SRC_SCALE * H)).save(path)
+                source = "reused still"
             else:
                 title_card(plan["story"]["title"], path, W, H)
                 source = "title card"

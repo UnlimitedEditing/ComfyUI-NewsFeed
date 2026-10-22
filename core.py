@@ -277,7 +277,13 @@ def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, ca
         f"The shots' lines, in order, are the narration split into spoken parts, each about {max(8, words // nshots)} words. "
         "If a line is about what an article image shows (its subject, person or place), set media_id to that "
         "image and image_prompt to null. Never use an image for a line it does not depict; use each at most once. "
-        "Otherwise media_id is null and image_prompt describes one still, no text in the image.\n\n"
+        "Otherwise media_id is null and image_prompt describes one still: a concrete scene from the story "
+        "(who or what, where, doing what), 12 to 25 words, no text in the image, never a generic fashion or "
+        "catalogue picture. If the story is about a death or tragedy, every image_prompt must be respectful, "
+        "symbolic and non-graphic (an empty stadium at dusk, candles, flowers, a folded jersey): never show injury, "
+        "medical scenes, bodies or anyone in distress.\n"
+        "Each line must be a complete, accurate statement that stands on its own: never cut a fact short "
+        "(write 'a tear in the aorta', not just 'a tear').\n\n"
         f"SOURCE HEADLINE: {item['title']}\nSOURCE TEXT:\n" + "\n".join(src) + "\n")
     story = {
         "title": item["title"], "link": item["link"], "category": item["category"],
@@ -285,6 +291,7 @@ def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, ca
         "sfx": tn["sfx"], "caption_mode": pre["caption"][str(caption)], "caption": caption, "seed": seed,
         "length": length, "shot_seconds": shot_seconds, "cameras": cams, "nshots": nshots,
         "source": "\n".join(src)[:MAX_SOURCE_CHARS], "format": int(fmt), "format_name": fm["name"], "gen_size": list(fm["gen"]), "out_size": list(fm["out"]),
+        "sombre": is_sombre(item["title"], "\n".join(src)),
         "tone_voice": tn.get("voice", ""), "energy": int(energy),
         "energy_note": pre.get("energy", {}).get(str(int(energy)), ""),
     }
@@ -332,6 +339,30 @@ def salvage_llm_json(text):
 
 
 
+_STOP = set("a an the and or of to in on at for with by from as is are was were be been it its this that these those his her "
+            "their they he she we you i not no but if then than so such into over after before about up down out new "
+            "has have had will would could should can may might more most also just only".split())
+_SOMBRE_RE = re.compile(r"\b(died|dies|dead|death|deaths|killed|kills|funeral|autopsy|post-mortem|fatal|tragic|tragedy|"
+                        r"victims?|mourn\w*|tribute|crash|shooting|massacre|drown\w*)\b", re.I)
+_SOMBRE_WORDS = re.compile(r"\b(autopsy|post-mortem|corpse|dead body|bodies|body|blood|wound\w*|surgery|hospital bed|"
+                           r"morgue|medical examiner)\b", re.I)
+
+
+def is_sombre(title, source):
+    """Deaths, disasters and the like: pictures must be respectful and symbolic, never literal."""
+    return bool(_SOMBRE_RE.search((title or "") + " " + (source or "")[:700]))
+
+
+def _words(s):
+    return {w for w in re.findall(r"[a-z]{3,}", (s or "").lower()) if w not in _STOP}
+
+
+def _related(prompt, line, title):
+    """True if the picture prompt shares at least one content word with its spoken line or the story title."""
+    pw = _words(prompt)
+    return bool(pw & (_words(line) | _words(title)))
+
+
 def _plain(s, limit):
     s = re.sub(r"[\[\]{}<>|\\]", " ", str(s or ""))
     return re.sub(r"\s+", " ", s).strip()[:limit].rstrip(" ,;")
@@ -375,8 +406,19 @@ def finish_script(llm_text, story):
             mid = None
         prompt = (s.get("image_prompt") or "").strip()
         if mid is None:
-            # never fall back to the title: MOSS draws any words it is given as lettering
-            prompt = story["visual_prefix"] + (prompt or (s.get("line") or "a scene from the story").strip())
+            line_txt = (s.get("line") or "").strip()
+            sombre = bool(story.get("sombre"))
+            if not prompt or not _related(prompt, line_txt, story.get("title", "")):
+                # small models sometimes write an unrelated picture prompt (a fashion shoot for a sports story);
+                # fall back to the line itself, never the title: MOSS draws any words it is given as lettering
+                if prompt:
+                    warnings.append(f"shot {i+1}: image prompt unrelated to its line, rebuilt from the line")
+                prompt = line_txt or "a scene from the story"
+            if sombre:
+                prompt = _SOMBRE_WORDS.sub("", prompt)
+                prompt += (", respectful and sombre, non-graphic symbolic scene such as an empty stadium at dusk, "
+                           "candles or flowers, soft muted light, no injury, no medical scene")
+            prompt = story["visual_prefix"] + prompt
         shots.append({"line": repair_text((s.get("line") or "").strip(), story.get("source", "")), "media_id": mid,
                       "instruct": compose_instruct(d.get("voice"), story.get("tone_voice", ""),
                                                    story.get("energy_note", ""), s.get("delivery")),
@@ -384,7 +426,7 @@ def finish_script(llm_text, story):
                       "camera": story["cameras"][i] if i < len(story["cameras"]) else "static with subtle drift",
                       "seed": story["seed"] + i, "seconds": story["shot_seconds"]})
     narration = repair_text((d.get("narration") or " ".join(s["line"] for s in shots)).strip(), story.get("source", ""))
-    hl = " ".join(re.sub(r'["“”]', "", str(d.get("headline") or "")).split()[:8])
+    hl = headline(re.sub(r'["“”]', "", str(d.get("headline") or "")), 48) if d.get("headline") else ""
     return {"ok": bool(shots), "warnings": warnings, "headline": hl, "voice": _plain(d.get("voice"), 140),
             "narration": narration, "shots": shots,
             "story": {k: v for k, v in story.items() if k not in ("media", "cameras", "source")}}
