@@ -32,6 +32,7 @@ CAMERAS = {"push-in": "slow push-in", "pull-out": "slow pull-out", "pan left": "
            "pan right": "pan right", "tilt up": "tilt up", "drift": "static with subtle drift"}
 
 KEY = re.compile(r"(?:^|(?<=\s))(?:\*\*)?((?:CHARACTER|LOCATION)\s+[A-Za-z0-9_-]+\s*:|SHOT\s*\d+\s*:?|"
+                 r"OBJECT\s+[A-Za-z0-9_-]+(?:\s+\d+){4}\s*:|SCENE:|"
                  r"TITLE:|VOICE:|LOOK:|SAY:|DELIVERY:|PLACE:|CAST:|ACTION:|SPEAKER:|CAMERA:)(?:\*\*)?")
 NO_TEXT = " No text, no lettering, no logos."
 CHAR_SUFFIX = ", full body character reference, standing, facing the viewer, plain light neutral background, even lighting"
@@ -49,6 +50,9 @@ def tokenize(text):
         val = re.sub(r"\s+", " ", text[m.end():end]).strip()
         if raw.startswith("SHOT"):
             out.append(("SHOT", "", ""))
+        elif raw.startswith("OBJECT"):
+            parts = raw.rstrip(":").split()
+            out.append(("OBJECT", " ".join(parts[1:]).lower(), val))
         elif raw.startswith(("CHARACTER", "LOCATION")):
             kind, ident = raw.rstrip(":").split(None, 1)
             out.append((kind, ident.strip().lower(), val))
@@ -65,6 +69,31 @@ def _speaker(raw, default):
         if sp.lower() == s.lower():
             return sp, None
     return default, f"unknown speaker {raw!r}, using {default}"
+
+
+def explicit_layout(scene, objects, chars, size):
+    """Layout JSON from the script's own boxes. objects: (ident, description) where ident is 'name x0 y0 x1 y1' with the box
+    in percent of the frame (x left to right, y top to bottom). A name that matches a CHARACTER id pulls in that character's
+    full description verbatim, with the line after the colon as the pose and expression."""
+    import math
+    w, h = size
+    items = []
+    for ident, desc in objects[:4]:
+        parts = ident.split()
+        name, nums = parts[0], [max(0, min(100, int(p))) for p in parts[1:5]]
+        x0, y0, x1, y1 = nums
+        x0, x1 = sorted((x0, x1))
+        y0, y1 = sorted((y0, y1))
+        if x1 - x0 < 3 or y1 - y0 < 3:
+            continue
+        y1 = min(y1, 90)        # bottom of the frame stays free for captions
+        base = core._plain(chars[name], 400) if name in chars else ""
+        cap = (base + (", " if base and desc else "") + core._plain(desc, 300)).strip() or name
+        bb = [math.floor(y0 * 10 * h / 1000) - h // 2, math.floor(x0 * 10 * w / 1000) - w // 2,
+              math.ceil(y1 * 10 * h / 1000) - h // 2, math.ceil(x1 * 10 * w / 1000) - w // 2]
+        items.append({"label": "object", "caption": cap + ", no text", "bbox": bb})
+    return json.dumps({"summary": {"caption": scene}, "items": items, "bbox_coord_space": "abs_centralized",
+                       "bbox_format": "yxyx"}, ensure_ascii=False, separators=(",", ":"))
 
 
 def moss_layout(scene, people, framing, size, idx=0):
@@ -109,8 +138,15 @@ def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1
             chars.setdefault(ident, v)
         elif k == "LOCATION":
             locs.setdefault(ident, v)
+        elif k == "OBJECT" and cur is not None:
+            cur.setdefault("objects", []).append((ident, v))
         elif cur is not None:
             cur[k] = v if k not in cur else cur[k] + " " + v
+    if not locs and any(x.get("SCENE") for x in shots):
+        locs["scene"] = ""
+    for x in shots:
+        if not x.get("ACTION") and x.get("SCENE"):
+            x["ACTION"] = x["SCENE"]
     if not locs:
         raise ValueError("no LOCATION lines: define each place as LOCATION id: description. Received %d chars: %r" % (len(text or ""), (text or "")[:200]))
     if len(chars) + len(locs) > 6:
@@ -122,7 +158,8 @@ def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1
             warnings.append(f"shot {n}: needs SAY and ACTION, skipped")
             continue
         if place not in locs:
-            warnings.append(f"shot {n}: PLACE {place!r} is not a defined location, using {next(iter(locs))!r}")
+            if place:
+                warnings.append(f"shot {n}: PLACE {place!r} is not a defined location, using {next(iter(locs))!r}")
             place = next(iter(locs))
         cast = [c.strip().lower() for c in re.split(r"[,;]| and ", s.get("CAST") or "") if c.strip()]
         keep = [c for c in cast if c in chars]
@@ -171,8 +208,11 @@ def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1
              + "Keep each character's exact face, hair, clothes and proportions, and keep the place, light and colours "
              "of the location. " + look_s + NO_TEXT.strip())
         shot_prompts.append(p)
-        scene = (look_s + core._plain(locs[s["place"]], 400).rstrip(".") + ". " + core._plain(s["ACTION"], 300).rstrip(".")
-                 + "." + NO_TEXT)
+        scene = (look_s + (core._plain(locs[s["place"]], 400).rstrip(".") + ". " if locs[s["place"]] else "")
+                 + core._plain(s.get("SCENE") or s["ACTION"], 400).rstrip(".") + "." + NO_TEXT)
+        if s.get("objects"):
+            layouts.append(explicit_layout(scene, s["objects"], chars, gen_size))
+            continue
         layouts.append(moss_layout(scene, [core._plain(chars[c], 400) + ", no text" for c in s["cast"]],
                                    s["ACTION"], gen_size, i))
         shot_seeds.append(int(seed) + i)
