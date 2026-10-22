@@ -109,10 +109,10 @@ class NewsParseScript:
             "energy":   ("INT", {"default": 1, "min": 0, "max": 2}),
         }}
 
-    RETURN_TYPES = ("STRING", "INT", "STRING", "INT", "STRING", "STRING", "INT", "INT", "STRING", "STRING")
+    RETURN_TYPES = ("STRING", "INT", "STRING", "INT", "STRING", "STRING", "INT", "INT", "STRING", "STRING", "STRING")
     RETURN_NAMES = ("ref_prompts", "ref_seeds", "shot_prompts", "shot_seeds", "lines", "plan_json", "width", "height",
-                    "instructs", "speakers")
-    OUTPUT_IS_LIST = (True, True, True, True, True, False, False, False, True, True)
+                    "instructs", "speakers", "layout_prompts")
+    OUTPUT_IS_LIST = (True, True, True, True, True, False, False, False, True, True, True)
     FUNCTION = "run"
     CATEGORY = "NewsFeed"
 
@@ -122,7 +122,7 @@ class NewsParseScript:
         plan, rp, rs, sp_, ss, lines, instructs, speakers = scriptlib.parse(script, speaker, seed, caption, energy, (w, h))
         print(f"[NewsFeed] script: {plan['n_chars']} characters, {plan['n_locs']} locations, {len(lines)} shots at {w}x{h}, "
               f"speakers={sorted(set(speakers))}, warnings={plan['warnings']}")
-        return (rp, rs, sp_, ss, lines, json.dumps(plan), w, h, instructs, speakers)
+        return (rp, rs, sp_, ss, lines, json.dumps(plan), w, h, instructs, speakers, plan["layouts"])
 
 
 class NewsShotRefs:

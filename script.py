@@ -19,6 +19,7 @@ over several lines. Keys are upper case and end with a colon; "SHOT 3" may or ma
 The renderer draws every CHARACTER and LOCATION once (text to image), then draws each shot as an edit that uses the
 location picture and the cast picture as references, so characters and places stay the same from shot to shot.
 """
+import json
 import random
 import re
 
@@ -64,6 +65,31 @@ def _speaker(raw, default):
         if sp.lower() == s.lower():
             return sp, None
     return default, f"unknown speaker {raw!r}, using {default}"
+
+
+def moss_layout(scene, people, framing, size, idx=0):
+    """MOSS-Image layout JSON (same schema as core.layout_prompt): the scene caption, then one object box per character
+    carrying that character's full description verbatim, placed by the shot's framing and cast size.
+    bboxes are [y0, x0, y1, x1] on a 0-1000 grid; the bottom ~12% stays clear for captions."""
+    import json
+    import math
+    w, h = size
+    f = (framing or "").lower()
+    if "close" in f:
+        top, bot, half = 60, 880, 190 if len(people) > 1 else 230
+    elif "wide" in f:
+        top, bot, half = 430, 880, 75
+    else:
+        top, bot, half = 160, 880, 140 if len(people) > 1 else 170
+    centres = {1: [450 + 100 * (idx % 2)], 2: [320, 680], 3: [220, 500, 780]}.get(len(people), [])
+
+    def bbox(y0, x0, y1, x1):
+        return [math.floor(y0 * h / 1000) - h // 2, math.floor(x0 * w / 1000) - w // 2,
+                math.ceil(y1 * h / 1000) - h // 2, math.ceil(x1 * w / 1000) - w // 2]
+    items = [{"label": "object", "caption": desc, "bbox": bbox(top, max(20, c - half), bot, min(980, c + half))}
+             for desc, c in zip(people, centres)]
+    return json.dumps({"summary": {"caption": scene}, "items": items, "bbox_coord_space": "abs_centralized",
+                       "bbox_format": "yxyx"}, ensure_ascii=False, separators=(",", ":"))
 
 
 def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1024, 576)):
@@ -121,6 +147,7 @@ def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1
     ref_seeds = [int(seed) + 100 + i for i in range(len(ref_prompts))]
 
     shot_prompts, shot_seeds, lines, instructs, speakers, plan_shots = [], [], [], [], [], []
+    layouts = []
     for i, s in enumerate(good):
         sp, warn = _speaker(s.get("SPEAKER"), default_speaker)
         if warn:
@@ -144,6 +171,10 @@ def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1
              + "Keep each character's exact face, hair, clothes and proportions, and keep the place, light and colours "
              "of the location. " + look_s + NO_TEXT.strip())
         shot_prompts.append(p)
+        scene = (look_s + core._plain(locs[s["place"]], 400).rstrip(".") + ". " + core._plain(s["ACTION"], 300).rstrip(".")
+                 + "." + NO_TEXT)
+        layouts.append(moss_layout(scene, [core._plain(chars[c], 400) + ", no text" for c in s["cast"]],
+                                   s["ACTION"], gen_size, i))
         shot_seeds.append(int(seed) + i)
         line = core._plain(s["SAY"], 600) or "."
         lines.append(line)
@@ -166,4 +197,5 @@ def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1
                       "caption_mode": pre["caption"][str(int(caption))], "out_size": [out_w, out_h],
                       "gen_size": [w, h], "seed": int(seed)},
             "spare_image": False, "pad": 0.12}
+    plan["layouts"] = layouts
     return plan, ref_prompts, ref_seeds, shot_prompts, shot_seeds, lines, instructs, speakers
