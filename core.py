@@ -240,11 +240,11 @@ def headline(title, limit=48):
     return " ".join(words)
 
 
-def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, caption, fmt=0):
+def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, caption, fmt=0, max_shots=MAX_SHOTS):
     pre = load_json("presets.json")
     tn, vs = pre["tone"][str(tone)], pre["visual"][str(visual)]
     fm = FORMATS.get(int(fmt), FORMATS[0])
-    nshots = min(MAX_SHOTS, max(2, round(length / shot_seconds)))
+    nshots = min(int(max_shots), max(2, round(length / shot_seconds)))
     words = int(length * pre["words_per_second"])
     rng = random.Random(seed)
     cams = [rng.choice(pre["camera"]) for _ in range(nshots)]

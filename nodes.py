@@ -30,19 +30,21 @@ class NewsPickStory:
             "caption":      ("INT", {"default": 1, "min": 0, "max": 3}),
             "format":       ("INT", {"default": 0, "min": 0, "max": 2}),
             "query":        ("STRING", {"default": ""}),
-        }}
+        },
+            # optional so older workflow JSONs (which do not send it) keep working
+            "optional": {"max_shots": ("INT", {"default": 8, "min": 2, "max": 8})}}
 
     RETURN_TYPES = ("STRING", "STRING", "STRING")
     RETURN_NAMES = ("system_prompt", "user_prompt", "story_json")
     FUNCTION = "run"
     CATEGORY = "NewsFeed"
 
-    def run(self, category, pick_seed, tone, visual, length, shot_seconds, caption, format, query):
+    def run(self, category, pick_seed, tone, visual, length, shot_seconds, caption, format, query, max_shots=8):
         print(f"[NewsFeed] inputs category={category!r} seed={pick_seed} tone={tone} visual={visual} "
               f"length={length} shot_seconds={shot_seconds} caption={caption} format={format} query={query!r}")
         item, paras, media = core.pick_story(category, pick_seed, query=query)
         system, user, story = core.build_brief(item, paras, media, pick_seed, tone, visual,
-                                               length, shot_seconds, caption, format)
+                                               length, shot_seconds, caption, format, max_shots)
         print(f"[NewsFeed] picked [{item['category']}] {item['title']} "
               f"({len(paras)} paras, {len(media)} images)")
         return (system, user, json.dumps(story))
