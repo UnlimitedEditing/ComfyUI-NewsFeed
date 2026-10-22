@@ -109,10 +109,12 @@ class NewsParseScript:
             "energy":   ("INT", {"default": 1, "min": 0, "max": 2}),
         }}
 
-    RETURN_TYPES = ("STRING", "INT", "STRING", "INT", "STRING", "STRING", "INT", "INT", "STRING", "STRING", "STRING")
+    RETURN_TYPES = ("STRING", "INT", "STRING", "INT", "STRING", "STRING", "INT", "INT", "STRING", "STRING", "STRING",
+                    "STRING", "INT", "INT", "INT")
     RETURN_NAMES = ("ref_prompts", "ref_seeds", "shot_prompts", "shot_seeds", "lines", "plan_json", "width", "height",
-                    "instructs", "speakers", "layout_prompts")
-    OUTPUT_IS_LIST = (True, True, True, True, True, False, False, False, True, True, True)
+                    "instructs", "speakers", "layout_prompts", "asset_prompts", "asset_seeds", "asset_widths",
+                    "asset_heights")
+    OUTPUT_IS_LIST = (True, True, True, True, True, False, False, False, True, True, True, True, True, True, True)
     FUNCTION = "run"
     CATEGORY = "NewsFeed"
 
@@ -122,7 +124,8 @@ class NewsParseScript:
         plan, rp, rs, sp_, ss, lines, instructs, speakers = scriptlib.parse(script, speaker, seed, caption, energy, (w, h))
         print(f"[NewsFeed] script: {plan['n_chars']} characters, {plan['n_locs']} locations, {len(lines)} shots at {w}x{h}, "
               f"speakers={sorted(set(speakers))}, warnings={plan['warnings']}")
-        return (rp, rs, sp_, ss, lines, json.dumps(plan), w, h, instructs, speakers, plan["layouts"])
+        return (rp, rs, sp_, ss, lines, json.dumps(plan), w, h, instructs, speakers, plan["layouts"],
+                plan["assets"]["prompts"], plan["assets"]["seeds"], plan["assets"]["w"], plan["assets"]["h"])
 
 
 class NewsShotRefs:
@@ -179,6 +182,41 @@ class NewsShotRefs:
             cast_out.append(torch.from_numpy(np.asarray(board, dtype=np.float32) / 255.0).unsqueeze(0))
         print(f"[NewsFeed] shot refs: {len(loc_out)} shots, cast boards {[(c.shape[2], c.shape[1]) for c in cast_out]}")
         return (loc_out, cast_out)
+
+
+class NewsCompositeShots:
+    """Cutout mode: cuts each drawn character out of its flat background and pastes the cast into every shot's own plate.
+    Input is the drawn assets: characters first, then one plate per shot. Output is one finished picture per shot."""
+    INPUT_IS_LIST = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"plan_json": ("STRING", {"forceInput": True}), "assets": ("IMAGE",)}}
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("images",)
+    OUTPUT_IS_LIST = (True,)
+    FUNCTION = "run"
+    CATEGORY = "NewsFeed"
+
+    def run(self, plan_json, assets):
+        from PIL import Image
+        from . import composite
+        plan = json.loads(plan_json[0])
+        pics = [Image.fromarray((a[0].cpu().numpy() * 255).clip(0, 255).astype(np.uint8)) for a in assets]
+        nc = plan["n_chars"]
+        figs = [composite.cutout(p) for p in pics[:nc]]
+        for i, f in enumerate(figs):
+            print(f"[NewsFeed] cutout {plan['char_ids'][i]}: {f.width}x{f.height}")
+        gw, gh = plan["story"]["gen_size"]
+        out = []
+        for i, s in enumerate(plan["shots"]):
+            plate = pics[nc + i]
+            if plate.size != (gw, gh):
+                plate = video.cover_crop(plate, gw, gh)
+            img = composite.place_cast(plate, [figs[c] for c in s["cast"]], s.get("framing", "medium"), i)
+            out.append(torch.from_numpy(np.asarray(img, dtype=np.float32) / 255.0).unsqueeze(0))
+        return (out,)
 
 
 class NewsKokoro:
@@ -303,12 +341,12 @@ class NewsGateAudio:
 
 
 NODE_CLASS_MAPPINGS = {"NewsPickStory": NewsPickStory, "NewsFinishScript": NewsFinishScript,
-                       "NewsShotLists": NewsShotLists, "NewsParseScript": NewsParseScript, "NewsShotRefs": NewsShotRefs, "NewsKokoro": NewsKokoro, "NewsCompile": NewsCompile,
+                       "NewsShotLists": NewsShotLists, "NewsParseScript": NewsParseScript, "NewsShotRefs": NewsShotRefs, "NewsCompositeShots": NewsCompositeShots, "NewsKokoro": NewsKokoro, "NewsCompile": NewsCompile,
                        "NewsMark": NewsMark, "NewsGateAudio": NewsGateAudio,
                        "NewsQwenTTS": qwentts.NewsQwenTTS, "NewsRepeatLine": qwentts.NewsRepeatLine,
                        "NewsSplitLines": qwentts.NewsSplitLines}
 NODE_DISPLAY_NAME_MAPPINGS = {"NewsPickStory": "News Pick Story", "NewsFinishScript": "News Finish Script",
-                              "NewsShotLists": "News Shot Lists", "NewsParseScript": "News Parse Script", "NewsShotRefs": "News Shot Refs", "NewsKokoro": "News Kokoro TTS",
+                              "NewsShotLists": "News Shot Lists", "NewsParseScript": "News Parse Script", "NewsShotRefs": "News Shot Refs", "NewsCompositeShots": "News Composite Shots", "NewsKokoro": "News Kokoro TTS",
                               "NewsCompile": "News Compile", "NewsMark": "News Mark", "NewsGateAudio": "News Gate Audio",
                               "NewsQwenTTS": "News Qwen3-TTS (batch)", "NewsRepeatLine": "News Repeat Line",
                               "NewsSplitLines": "News Split Lines"}

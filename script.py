@@ -182,6 +182,7 @@ def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1
         speakers.append(sp)
         cam = (s.get("CAMERA") or "").strip().lower()
         plan_shots.append({"line": line, "media_id": None, "media": None, "instruct": instruct, "image_prompt": p,
+                           "framing": ("close" if "close" in s["ACTION"].lower() else "wide" if "wide" in s["ACTION"].lower() else "medium"),
                            "camera": CAMERAS.get(cam) or rng.choice(pre["camera"]), "seed": int(seed) + i,
                            "seconds": 6, "speaker": sp, "place": ids_l.index(s["place"]),
                            "cast": [ids_c.index(c) for c in s["cast"]]})
@@ -198,4 +199,19 @@ def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1
                       "gen_size": [w, h], "seed": int(seed)},
             "spare_image": False, "pad": 0.12}
     plan["layouts"] = layouts
+    # cutout mode: characters on a flat green background (portrait), then one empty plate per shot
+    flat = ", full body character reference, standing, facing the viewer, on a plain solid bright green background, flat even lighting, no shadow, no props"
+    a_prompts = [look_s + core._plain(chars[c], 500) + flat + "." + NO_TEXT for c in ids_c]
+    a_w = [min(w, h) // 32 * 32] * len(ids_c)
+    a_h = [max(w, h) // 32 * 32] * len(ids_c)
+    for i, s in enumerate(good):
+        fr = "close" if "close" in (s["ACTION"] or "").lower() else "wide" if "wide" in (s["ACTION"] or "").lower() else "medium"
+        view = {"close": "tight detail view of the background, shallow depth of field", "wide": "wide establishing view",
+                "medium": "medium view"}[fr]
+        a_prompts.append(look_s + core._plain(locs[s["place"]], 450).rstrip(".") + ", " + view
+                         + ", empty scene with no people and no figures." + NO_TEXT)
+        a_w.append(w)
+        a_h.append(h)
+    plan["assets"] = {"prompts": a_prompts, "seeds": [int(seed) + 100 + i for i in range(len(a_prompts))],
+                      "w": a_w, "h": a_h}
     return plan, ref_prompts, ref_seeds, shot_prompts, shot_seeds, lines, instructs, speakers
