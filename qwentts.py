@@ -27,18 +27,19 @@ def load_model(size):
     return _MODELS[size]
 
 
-def _gen_batch(model, texts, instructs, speaker, language):
+def _gen_batch(model, texts, instructs, speakers, language):
     n = len(texts)
     return model.generate_custom_voice(
-        text=list(texts), language=[language] * n, speaker=[speaker] * n, instruct=list(instructs))
+        text=list(texts), language=[language] * n, speaker=list(speakers), instruct=list(instructs))
 
 
-def generate(texts, instructs, speaker, size, language, seed, batch=8):
+def generate(texts, instructs, speaker, size, language, seed, batch=8, speakers=None):
     """Returns (list of float32 mono arrays, sample_rate). Lines go through in batches of `batch`; if a batch fails
     (e.g. out of memory) it is retried in halves, down to single lines."""
     model = load_model(size)
     n = len(texts)
     instructs = (list(instructs) + [""] * n)[:n]
+    speakers = [(speakers[i] if speakers and i < len(speakers) and speakers[i] else speaker) for i in range(n)]
     if seed:
         torch.manual_seed(int(seed))
     t = time.time()
@@ -47,7 +48,7 @@ def generate(texts, instructs, speaker, size, language, seed, batch=8):
     def run(idx):
         nonlocal sr
         try:
-            wavs, sr = _gen_batch(model, [texts[i] for i in idx], [instructs[i] for i in idx], speaker, language)
+            wavs, sr = _gen_batch(model, [texts[i] for i in idx], [instructs[i] for i in idx], [speakers[i] for i in idx], language)
             for i, w in zip(idx, wavs):
                 out[i] = np.asarray(w.detach().cpu().numpy() if hasattr(w, "detach") else w,
                                     dtype=np.float32).reshape(-1)
@@ -82,7 +83,7 @@ class NewsQwenTTS:
             "model_size": (["1.7B", "0.6B"], {"default": "1.7B"}),
             "language": ("STRING", {"default": "English"}),
             "seed":     ("INT", {"default": 0, "min": 0, "max": 2**31 - 1}),
-        }}
+        }, "optional": {"speakers": ("STRING", {"forceInput": True})}}
 
     RETURN_TYPES = ("AUDIO",)
     RETURN_NAMES = ("audio",)
@@ -90,8 +91,8 @@ class NewsQwenTTS:
     FUNCTION = "run"
     CATEGORY = "NewsFeed"
 
-    def run(self, texts, instructs, speaker, model_size, language, seed):
-        wavs, sr = generate(texts, instructs, speaker[0], model_size[0], language[0], seed[0])
+    def run(self, texts, instructs, speaker, model_size, language, seed, speakers=None):
+        wavs, sr = generate(texts, instructs, speaker[0], model_size[0], language[0], seed[0], speakers=speakers)
         return ([{"waveform": torch.from_numpy(w).reshape(1, 1, -1), "sample_rate": sr} for w in wavs],)
 
 
