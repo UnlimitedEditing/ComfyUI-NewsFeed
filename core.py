@@ -174,7 +174,7 @@ def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, ca
         f"AVAILABLE ARTICLE IMAGES:\n{mblock}\n"
         f'Output JSON: {{"narration": str, "shots": [exactly {nshots} x '
         '{"line": str, "media_id": str|null, "image_prompt": str|null}]}.\n'
-        "The shots' lines, in order, are the narration split into spoken parts. "
+        f"The shots' lines, in order, are the narration split into spoken parts, each about {max(8, words // nshots)} words. "
         "If a line is about what an article image shows (its subject, person or place), set media_id to that "
         "image and image_prompt to null. Never use an image for a line it does not depict; use each at most once. "
         "Otherwise media_id is null and image_prompt describes one still, no text in the image.\n\n"
@@ -252,7 +252,7 @@ def finish_script(llm_text, story):
             mid = None
         prompt = (s.get("image_prompt") or "").strip()
         if mid is None:
-            prompt = story["visual_prefix"] + (prompt or story["title"])
+            prompt = story["visual_prefix"] + (prompt or story["title"]) + ", no text, no letters, no captions, no logos"
         shots.append({"line": (s.get("line") or "").strip(), "media_id": mid,
                       "media": byid.get(mid), "image_prompt": prompt if mid is None else None,
                       "camera": story["cameras"][i] if i < len(story["cameras"]) else "static with subtle drift",
