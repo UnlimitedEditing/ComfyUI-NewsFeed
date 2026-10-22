@@ -16,7 +16,6 @@ from . import core
 
 FPS = 24
 PAD = 0.35            # silence after every shot's narration
-W, H = 1280, 720
 
 KOKORO_BASE = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
 KOKORO_FILES = ("kokoro-v1.0.onnx", "voices-v1.0.bin")
@@ -25,20 +24,30 @@ KOKORO_FILES = ("kokoro-v1.0.onnx", "voices-v1.0.bin")
 # ── shot lists ────────────────────────────────────────────────────────────────
 
 def shot_lists(result):
-    """result: dict from core.finish_script. Returns (prompts, seeds, lines, plan)."""
+    """result: dict from core.finish_script. Returns (layout prompts, seeds, lines, plan, width, height)."""
     if not result.get("ok") or not result.get("shots"):
         raise RuntimeError(f"script step failed: {result.get('error') or result.get('warnings')}")
+    story = result["story"]
+    fmt = core.FORMATS.get(int(story.get("format", 0)), core.FORMATS[0])
+    gen = tuple(fmt["gen"])
     shots = result["shots"]
-    prompts = [s["image_prompt"] for s in shots if s["media_id"] is None]
-    seeds = [s["seed"] for s in shots if s["media_id"] is None]
+    gen_shots = [s for s in shots if s["media_id"] is None]
+    head = core.headline(story["title"])
+    prompts, seeds = [], []
+    for k, s in enumerate(gen_shots):
+        cap = s["image_prompt"] or (story["visual_prefix"] + story["title"])
+        # the first drawn still carries the headline as real lettering; the rest are text-free
+        prompts.append(core.layout_prompt(cap if k == 0 else cap + ", no text, no lettering", fmt,
+                                          gen, text=head if k == 0 else None))
+        seeds.append(s["seed"])
     spare = False
     if not prompts:  # an empty list would skip every downstream node
-        prompts = [result["story"]["visual_prefix"] + result["story"]["title"]]
-        seeds = [result["story"]["seed"]]
+        prompts = [core.layout_prompt(story["visual_prefix"] + story["title"], fmt, gen, text=head)]
+        seeds = [story["seed"]]
         spare = True
     lines = [s["line"] or "." for s in shots]
     plan = dict(result, spare_image=spare)
-    return prompts, seeds, lines, plan
+    return prompts, seeds, lines, plan, gen[0], gen[1]
 
 
 # ── Kokoro ────────────────────────────────────────────────────────────────────
@@ -171,19 +180,19 @@ def download_image(url, path):
     return path
 
 
-def title_card(title, path):
-    img = Image.new("RGB", (2560, 1440), (18, 22, 30))
+def title_card(title, path, W=1280, H=720):
+    img = Image.new("RGB", (2 * W, 2 * H), (18, 22, 30))
     d = ImageDraw.Draw(img)
     font = _font(120)
-    y = 500
-    for ln in _wrap(d, title, font, 2000):
+    y = H - 220
+    for ln in _wrap(d, title, font, int(1.6 * W)):
         tw = d.textlength(ln, font=font)
-        d.text(((2560 - tw) / 2, y), ln, font=font, fill=(235, 235, 235))
+        d.text(((2 * W - tw) / 2, y), ln, font=font, fill=(235, 235, 235))
         y += 150
     img.save(path)
 
 
-def zoompan(camera, n):
+def zoompan(camera, n, W, H):
     c = "(iw-iw/zoom)/2"
     cy = "(ih-ih/zoom)/2"
     z, x, y = "1.12", c, cy
@@ -215,6 +224,9 @@ def compile_video(plan, gen_images, audios, out_path, work):
     media, in order); audios: list of (samples, sr) per shot."""
     shots = plan["shots"]
     mode_name = plan["story"]["caption_mode"]
+    W, H = plan["story"].get("out_size", [1280, 720])
+    sc = min(1.0, W / 1280)
+    vertical = H > W
     mode = int(plan["story"].get("caption", 1))
     report, seg_inputs = [], []
     gi = 0
@@ -228,7 +240,7 @@ def compile_video(plan, gen_images, audios, out_path, work):
         if s["media_id"] and s.get("media"):
             try:
                 raw = download_image(s["media"]["url"], os.path.join(work, f"raw{i}"))
-                cover_crop(Image.open(raw).convert("RGB"), 2560, 1440).save(path)
+                cover_crop(Image.open(raw).convert("RGB"), 2 * W, 2 * H).save(path)
                 source = f"article {s['media_id']}"
                 lt = (s["media"].get("caption") or s["media"].get("alt") or "")[:140] or None
             except Exception as e:
@@ -236,10 +248,10 @@ def compile_video(plan, gen_images, audios, out_path, work):
                 s = dict(s, media_id=None)
         if source == "generated":
             if gi < len(gen_images):
-                cover_crop(Image.fromarray(gen_images[gi]).convert("RGB"), 2560, 1440).save(path)
+                cover_crop(Image.fromarray(gen_images[gi]).convert("RGB"), 2 * W, 2 * H).save(path)
                 gi += 1
             else:
-                title_card(plan["story"]["title"], path)
+                title_card(plan["story"]["title"], path, W, H)
                 source = "title card"
         pics.append((path, source, lt))
 
@@ -251,21 +263,21 @@ def compile_video(plan, gen_images, audios, out_path, work):
         path, source, lt = pics[i]
         seg = os.path.join(work, f"seg{i}.mp4")
         cmd = ["ffmpeg", "-y", "-v", "error", "-i", path]
-        filt = [f"[0:v]{zoompan(s['camera'], n)},format=yuv420p[v0]"]
+        filt = [f"[0:v]{zoompan(s['camera'], n, W, H)},format=yuv420p[v0]"]
         last, k = "v0", 1
         if lt:
             p = os.path.join(work, f"lt{i}.png")
-            w_, h_ = lower_third_png(lt, p)
+            w_, h_ = lower_third_png(lt, p, size=int(28 * sc), max_w=int(560 * sc) + (80 if vertical else 0))
             cmd += ["-i", p]
-            filt.append(f"[{last}][{k}:v]overlay=x=40:y=40:format=auto[v{k}]")
+            filt.append(f"[{last}][{k}:v]overlay=x=30:y={int(0.08 * H) if vertical else 40}:format=auto[v{k}]")
             last, k = f"v{k}", k + 1
         if mode:
             big = mode == 3
             for j, (txt, a, b) in enumerate(chunk_windows(s["line"], mode, dur - PAD)):
                 p = os.path.join(work, f"cap{i}_{j}.png")
-                w_, h_ = caption_png(txt, p, size=72 if big else 46, bold=big)
+                w_, h_ = caption_png(txt, p, size=int((72 if big else 46) * sc), max_w=int(0.86 * W), bold=big)
                 cmd += ["-i", p]
-                y = "(main_h-overlay_h)/2" if big else "main_h-overlay_h-70"
+                y = "(main_h-overlay_h)/2" if big else (f"main_h-overlay_h-{int(0.2 * H)}" if vertical else "main_h-overlay_h-70")
                 filt.append(f"[{last}][{k}:v]overlay=x=(main_w-overlay_w)/2:y={y}:"
                             f"enable='between(t,{a:.2f},{b:.2f})':format=auto[v{k}]")
                 last, k = f"v{k}", k + 1

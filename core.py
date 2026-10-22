@@ -149,10 +149,50 @@ SYSTEM_PROMPT = ("You write short-video scripts from news articles. "
                  "Respond with valid JSON only, no prose, no markdown fences.")
 
 
-def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, caption):
+MAX_SHOTS = 6   # time budget: every shot costs one MOSS still
+
+# format code -> generated-still size, output video size, safe regions (0-1000 [y0, x0, y1, x1])
+FORMATS = {
+    0: {"name": "16:9", "gen": (1024, 576), "out": (1280, 720),
+        "title": [50, 80, 230, 920], "subject": [200, 120, 780, 880]},
+    1: {"name": "9:16", "gen": (576, 1024), "out": (720, 1280),
+        "title": [110, 60, 270, 940], "subject": [210, 80, 700, 920]},    # bottom ~30% left clear for app UI + captions
+    2: {"name": "1:1", "gen": (768, 768), "out": (1024, 1024),
+        "title": [60, 60, 230, 940], "subject": [180, 100, 760, 900]},
+}
+
+
+def layout_prompt(caption, regions, gen_size, text=None):
+    """MOSS-Image layout JSON, same schema as ComfyUI's MOSSImageLayoutPrompt node:
+    bboxes are [y0, x0, y1, x1] in pixels relative to the canvas centre."""
+    import math
+    w, h = gen_size
+
+    def bbox(r):
+        y0, x0, y1, x1 = r
+        return [math.floor(y0 * h / 1000) - h // 2, math.floor(x0 * w / 1000) - w // 2,
+                math.ceil(y1 * h / 1000) - h // 2, math.ceil(x1 * w / 1000) - w // 2]
+    items = []
+    if text:
+        items.append({"label": "text", "caption": "bold clean sans-serif headline lettering, high contrast",
+                      "text": text, "bbox": bbox(regions["title"])})
+    items.append({"label": "object", "caption": caption, "bbox": bbox(regions["subject"])})
+    return json.dumps({"summary": {"caption": caption}, "items": items, "bbox_coord_space": "abs_centralized",
+                       "bbox_format": "yxyx"}, ensure_ascii=False, separators=(",", ":"))
+
+
+def headline(title, limit=64):
+    t = re.sub(r"\s+", " ", title).strip()
+    if len(t) <= limit:
+        return t
+    return t[:limit].rsplit(" ", 1)[0]
+
+
+def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, caption, fmt=0):
     pre = load_json("presets.json")
     tn, vs = pre["tone"][str(tone)], pre["visual"][str(visual)]
-    nshots = max(2, round(length / shot_seconds))
+    fm = FORMATS.get(int(fmt), FORMATS[0])
+    nshots = min(MAX_SHOTS, max(2, round(length / shot_seconds)))
     words = int(length * pre["words_per_second"])
     rng = random.Random(seed)
     cams = [rng.choice(pre["camera"]) for _ in range(nshots)]
@@ -184,6 +224,7 @@ def build_brief(item, paras, media, seed, tone, visual, length, shot_seconds, ca
         "media": media, "tone": tn["name"], "visual": vs["name"], "visual_prefix": vs["prefix"],
         "sfx": tn["sfx"], "caption_mode": pre["caption"][str(caption)], "caption": caption, "seed": seed,
         "length": length, "shot_seconds": shot_seconds, "cameras": cams, "nshots": nshots,
+        "format": int(fmt), "format_name": fm["name"], "gen_size": list(fm["gen"]), "out_size": list(fm["out"]),
     }
     return SYSTEM_PROMPT, user, story
 
@@ -252,7 +293,7 @@ def finish_script(llm_text, story):
             mid = None
         prompt = (s.get("image_prompt") or "").strip()
         if mid is None:
-            prompt = story["visual_prefix"] + (prompt or story["title"]) + ", no text, no letters, no captions, no logos"
+            prompt = story["visual_prefix"] + (prompt or story["title"])
         shots.append({"line": (s.get("line") or "").strip(), "media_id": mid,
                       "media": byid.get(mid), "image_prompt": prompt if mid is None else None,
                       "camera": story["cameras"][i] if i < len(story["cameras"]) else "static with subtle drift",

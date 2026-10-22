@@ -25,9 +25,10 @@ class NewsPickStory:
             "pick_seed":    ("INT", {"default": 0, "min": 0, "max": 2**31 - 1}),
             "tone":         ("INT", {"default": 0, "min": 0, "max": 5}),
             "visual":       ("INT", {"default": 0, "min": 0, "max": 4}),
-            "length":       ("INT", {"default": 45, "min": 15, "max": 120}),
+            "length":       ("INT", {"default": 36, "min": 15, "max": 120}),
             "shot_seconds": ("INT", {"default": 6, "min": 3, "max": 15}),
             "caption":      ("INT", {"default": 1, "min": 0, "max": 3}),
+            "format":       ("INT", {"default": 0, "min": 0, "max": 2}),
         }}
 
     RETURN_TYPES = ("STRING", "STRING", "STRING")
@@ -35,12 +36,12 @@ class NewsPickStory:
     FUNCTION = "run"
     CATEGORY = "NewsFeed"
 
-    def run(self, category, pick_seed, tone, visual, length, shot_seconds, caption):
+    def run(self, category, pick_seed, tone, visual, length, shot_seconds, caption, format):
         print(f"[NewsFeed] inputs category={category!r} seed={pick_seed} tone={tone} visual={visual} "
-              f"length={length} shot_seconds={shot_seconds} caption={caption}")
+              f"length={length} shot_seconds={shot_seconds} caption={caption} format={format}")
         item, paras, media = core.pick_story(category, pick_seed)
         system, user, story = core.build_brief(item, paras, media, pick_seed, tone, visual,
-                                               length, shot_seconds, caption)
+                                               length, shot_seconds, caption, format)
         print(f"[NewsFeed] picked [{item['category']}] {item['title']} "
               f"({len(paras)} paras, {len(media)} images)")
         return (system, user, json.dumps(story))
@@ -76,16 +77,16 @@ class NewsShotLists:
     def INPUT_TYPES(cls):
         return {"required": {"result_json": ("STRING", {"forceInput": True})}}
 
-    RETURN_TYPES = ("STRING", "INT", "STRING", "STRING")
-    RETURN_NAMES = ("image_prompts", "seeds", "lines", "plan_json")
-    OUTPUT_IS_LIST = (True, True, True, False)
+    RETURN_TYPES = ("STRING", "INT", "STRING", "STRING", "INT", "INT")
+    RETURN_NAMES = ("image_prompts", "seeds", "lines", "plan_json", "width", "height")
+    OUTPUT_IS_LIST = (True, True, True, False, False, False)
     FUNCTION = "run"
     CATEGORY = "NewsFeed"
 
     def run(self, result_json):
-        prompts, seeds, lines, plan = video.shot_lists(json.loads(result_json))
-        print(f"[NewsFeed] {len(lines)} lines, {len(prompts)} images to generate (spare={plan['spare_image']})")
-        return (prompts, seeds, lines, json.dumps(plan))
+        prompts, seeds, lines, plan, w, h = video.shot_lists(json.loads(result_json))
+        print(f"[NewsFeed] {len(lines)} lines, {len(prompts)} images to generate at {w}x{h} (spare={plan['spare_image']})")
+        return (prompts, seeds, lines, json.dumps(plan), w, h)
 
 
 class NewsKokoro:
