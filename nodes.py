@@ -165,14 +165,15 @@ class NewsMark:
 
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {"audio": ("AUDIO",), "label": ("STRING", {"default": "mark"})}}
+        return {"required": {"audio": ("AUDIO",), "label": ("STRING", {"default": "mark"})},
+                "optional": {"wait_for": ("AUDIO",)}}   # ignored; only forces this node to run after another
 
     RETURN_TYPES = ("AUDIO",)
     RETURN_NAMES = ("audio",)
     FUNCTION = "run"
     CATEGORY = "NewsFeed"
 
-    def run(self, audio, label):
+    def run(self, audio, label, wait_for=None):
         import time
         try:
             import psutil
