@@ -285,7 +285,7 @@ def voice_script(text, default_desc="a warm, clear storyteller"):
         say = core._plain(s.get("SAY", ""), 600).replace("{", "").replace("}", "")
         if not say:
             continue
-        key = (s.get("SPEAKER") or "narrator").strip().lower().replace(" ", "_") or "narrator"
+        key = re.sub(r"[^a-z0-9_]", "", (s.get("SPEAKER") or "narrator").strip().lower().replace(" ", "_")) or "narrator"
         if key not in order:
             if len(order) >= 8:
                 warnings.append(f"shot {i+1}: more than 8 voices, {key!r} spoken by {order[-1]!r}")
