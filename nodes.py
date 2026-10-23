@@ -314,6 +314,35 @@ class NewsDramaGaps:
         return ({"waveform": torch.cat(parts, dim=-1), "sample_rate": sr},)
 
 
+class NewsParseShot:
+    """One shot of a story script as a MOSS layout prompt (same picture the full story-video-moss run would draw for it,
+    unless `variant` is changed). shot is 1-based."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "script":  ("STRING", {"multiline": True, "default": ""}),
+            "shot":    ("INT", {"default": 1, "min": 1, "max": 12}),
+            "variant": ("INT", {"default": 0, "min": 0, "max": 9999}),
+            "width":   ("INT", {"default": 1024, "min": 0, "max": 1280}),
+            "height":  ("INT", {"default": 576, "min": 0, "max": 1280}),
+            "seed":    ("INT", {"default": 0, "min": 0, "max": 2**31 - 1}),
+        }}
+
+    RETURN_TYPES = ("STRING", "INT", "INT", "INT")
+    RETURN_NAMES = ("layout_prompt", "seed", "width", "height")
+    FUNCTION = "run"
+    CATEGORY = "NewsFeed"
+
+    def run(self, script, shot, variant, width, height, seed):
+        snap = lambda v, d: d if v <= 0 else max(384, min(1280, int(round(v / 32.0)) * 32))
+        w, h = snap(width, 1024), snap(height, 576)
+        plan, rp, rs, sp_, ss, lines, instructs, speakers = scriptlib.parse("%s" % script, "Ryan", seed, 1, 1, (w, h))
+        k = max(1, min(int(shot), len(plan["layouts"])))
+        print(f"[NewsFeed] shot {k} of {len(plan['layouts'])} at {w}x{h}, variant {variant}, line: {lines[k - 1][:60]!r}")
+        return (plan["layouts"][k - 1], int(ss[k - 1]) + 1000 * int(variant), w, h)
+
+
 class NewsAssemble:
     """Cuts a story's stills to its narration: audio file + stills (by filename) + the story script -> captioned mp4.
     The narration is split at the silences between lines (story-voice joins takes with 0.3 s of silence)."""
@@ -516,12 +545,12 @@ class NewsGateAudio:
 
 
 NODE_CLASS_MAPPINGS = {"NewsPickStory": NewsPickStory, "NewsFinishScript": NewsFinishScript,
-                       "NewsShotLists": NewsShotLists, "NewsParseScript": NewsParseScript, "NewsShotRefs": NewsShotRefs, "NewsDramaGaps": NewsDramaGaps, "NewsAssemble": NewsAssemble, "NewsVoiceScript": NewsVoiceScript, "NewsDramaTimes": NewsDramaTimes, "NewsCompositeShots": NewsCompositeShots, "NewsKokoro": NewsKokoro, "NewsCompile": NewsCompile,
+                       "NewsShotLists": NewsShotLists, "NewsParseScript": NewsParseScript, "NewsShotRefs": NewsShotRefs, "NewsParseShot": NewsParseShot, "NewsDramaGaps": NewsDramaGaps, "NewsAssemble": NewsAssemble, "NewsVoiceScript": NewsVoiceScript, "NewsDramaTimes": NewsDramaTimes, "NewsCompositeShots": NewsCompositeShots, "NewsKokoro": NewsKokoro, "NewsCompile": NewsCompile,
                        "NewsMark": NewsMark, "NewsGateAudio": NewsGateAudio,
                        "NewsQwenTTS": qwentts.NewsQwenTTS, "NewsRepeatLine": qwentts.NewsRepeatLine,
                        "NewsSplitLines": qwentts.NewsSplitLines}
 NODE_DISPLAY_NAME_MAPPINGS = {"NewsPickStory": "News Pick Story", "NewsFinishScript": "News Finish Script",
-                              "NewsShotLists": "News Shot Lists", "NewsParseScript": "News Parse Script", "NewsShotRefs": "News Shot Refs", "NewsDramaGaps": "News Drama Gaps", "NewsAssemble": "News Assemble", "NewsVoiceScript": "News Voice Script", "NewsDramaTimes": "News Drama Times", "NewsCompositeShots": "News Composite Shots", "NewsKokoro": "News Kokoro TTS",
+                              "NewsShotLists": "News Shot Lists", "NewsParseScript": "News Parse Script", "NewsShotRefs": "News Shot Refs", "NewsParseShot": "News Parse Shot", "NewsDramaGaps": "News Drama Gaps", "NewsAssemble": "News Assemble", "NewsVoiceScript": "News Voice Script", "NewsDramaTimes": "News Drama Times", "NewsCompositeShots": "News Composite Shots", "NewsKokoro": "News Kokoro TTS",
                               "NewsCompile": "News Compile", "NewsMark": "News Mark", "NewsGateAudio": "News Gate Audio",
                               "NewsQwenTTS": "News Qwen3-TTS (batch)", "NewsRepeatLine": "News Repeat Line",
                               "NewsSplitLines": "News Split Lines"}
