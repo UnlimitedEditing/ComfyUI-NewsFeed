@@ -41,7 +41,7 @@ LOC_SUFFIX = ", empty location with no people, establishing view"
 
 def tokenize(text):
     """Returns list of (KEY, id, value) in order; text before the first key is dropped."""
-    text = (text or "").replace("\\<", "<").replace("\r", "")
+    text = (text or "").replace("\<", "<").replace(chr(92) + "r", " ").replace(chr(92) + "n", " ").replace("", "")
     marks = list(KEY.finditer(text))
     out = []
     for i, m in enumerate(marks):
