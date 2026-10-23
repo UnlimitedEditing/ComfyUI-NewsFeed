@@ -33,7 +33,7 @@ CAMERAS = {"push-in": "slow push-in", "pull-out": "slow pull-out", "pan left": "
 
 KEY = re.compile(r"(?:^|(?<=\s))(?:\*\*)?((?:CHARACTER|LOCATION)\s+[A-Za-z0-9_-]+\s*:|SHOT\s*\d+\s*:?|"
                  r"OBJECT\s+[A-Za-z0-9_-]+(?:\s+\d+){4}\s*:|SCENE:|"
-                 r"TITLE:|VOICE:|LOOK:|SAY:|DELIVERY:|PLACE:|CAST:|ACTION:|SPEAKER:|CAMERA:)(?:\*\*)?")
+                 r"VOICE\s+[A-Za-z0-9_-]+\s*:|TITLE:|VOICE:|LOOK:|SAY:|DELIVERY:|PLACE:|CAST:|ACTION:|SPEAKER:|CAMERA:)(?:\*\*)?")
 NO_TEXT = " No text, no lettering, no logos."
 CHAR_SUFFIX = ", full body character reference, standing, facing the viewer, plain light neutral background, even lighting"
 LOC_SUFFIX = ", empty location with no people, establishing view"
@@ -53,6 +53,8 @@ def tokenize(text):
         elif raw.startswith("OBJECT"):
             parts = raw.rstrip(":").split()
             out.append(("OBJECT", " ".join(parts[1:]).lower(), val))
+        elif re.match(r"VOICE\s+\S", raw):
+            out.append(("VOICEOF", raw.rstrip(":").split(None, 1)[1].strip().lower(), val))
         elif raw.startswith(("CHARACTER", "LOCATION")):
             kind, ident = raw.rstrip(":").split(None, 1)
             out.append((kind, ident.strip().lower(), val))
@@ -255,3 +257,50 @@ def parse(text, default_speaker="Ryan", seed=0, caption=1, energy=1, gen_size=(1
     plan["assets"] = {"prompts": a_prompts, "seeds": [int(seed) + 100 + i for i in range(len(a_prompts))],
                       "w": a_w, "h": a_h}
     return plan, ref_prompts, ref_seeds, shot_prompts, shot_seeds, lines, instructs, speakers
+
+
+QWEN_VOICES = {"ryan": "a clear, confident young man", "aiden": "a friendly, relaxed young man", "serena": "a warm young woman",
+               "vivian": "a bright, lively young woman", "dylan": "a deep, gravelly older man", "eric": "a calm middle-aged man",
+               "uncle_fu": "an old, wise, raspy man"}
+
+
+def voice_script(text, default_desc="a warm, clear storyteller"):
+    """Story script -> text for VoiceCast (Drama 3 + voice bank): {1:a warm clear storyteller}line {2:desc}line ...
+    A shot's speaker is NARRATOR (default) or a key; the voice description comes from `VOICE key: ...`, else the
+    character's own description, else a default. DELIVERY is not used (Drama 3 takes sound cues, not direction).
+    Returns (cast_text, plan) with plan["lines"] = [{i, speaker (1-8), key, text}]."""
+    chars, voices, shots, cur = {}, {}, [], None
+    for k, ident, v in tokenize(text):
+        if k == "SHOT":
+            cur = {}
+            shots.append(cur)
+        elif k == "CHARACTER":
+            chars.setdefault(ident, v)
+        elif k == "VOICEOF":
+            voices.setdefault(ident, v)
+        elif cur is not None and k in ("SAY", "SPEAKER"):
+            cur.setdefault(k, v)
+    order, lines, parts, warnings = [], [], [], []
+    for i, s in enumerate(shots):
+        say = core._plain(s.get("SAY", ""), 600).replace("{", "").replace("}", "")
+        if not say:
+            continue
+        key = (s.get("SPEAKER") or "narrator").strip().lower().replace(" ", "_") or "narrator"
+        if key not in order:
+            if len(order) >= 8:
+                warnings.append(f"shot {i+1}: more than 8 voices, {key!r} spoken by {order[-1]!r}")
+                key = order[-1]
+            else:
+                order.append(key)
+        n = order.index(key) + 1
+        first = not any(p[0] == key for p in parts)
+        desc = ""
+        if first:
+            desc = (voices.get(key) or (core._plain(chars[key], 90) if key in chars else "") or QWEN_VOICES.get(key)
+                    or default_desc)
+            desc = re.sub(r"[{}:]", " ", desc).strip()
+        parts.append((key, ("{%d:%s}" % (n, desc) if first else "{%d}" % n) + say))
+        lines.append({"i": len(lines), "speaker": n, "key": key, "text": say})
+    if not lines:
+        raise ValueError("no SAY lines found in the script")
+    return " ".join(p[1] for p in parts), {"lines": lines, "voices": order, "warnings": warnings}

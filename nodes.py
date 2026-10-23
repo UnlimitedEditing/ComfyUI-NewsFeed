@@ -219,6 +219,62 @@ class NewsCompositeShots:
         return (out,)
 
 
+class NewsVoiceScript:
+    """Story script -> Drama 3 / VoiceCast text (one take per SAY line, a voice per speaker)."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"script": ("STRING", {"multiline": True, "default": ""})}}
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("cast_text", "plan_json")
+    FUNCTION = "run"
+    CATEGORY = "NewsFeed"
+
+    def run(self, script):
+        cast_text, plan = scriptlib.voice_script(script)
+        print(f"[NewsFeed] voice script: {len(plan['lines'])} lines, voices={plan['voices']}, warnings={plan['warnings']}")
+        print(f"[NewsFeed] cast text: {cast_text[:300]}")
+        return (cast_text, json.dumps(plan))
+
+
+class NewsDramaTimes:
+    """Start and end second of every Drama 3 take in the decoded audio (Decode joins takes with 0.3 s of silence and
+    must run with shorten_long_pauses off). Output is a JSON string and the same JSON as a data image."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"codes": ("DRAMA3_CODES",), "plan_json": ("STRING", {"forceInput": True})}}
+
+    RETURN_TYPES = ("STRING", "IMAGE")
+    RETURN_NAMES = ("timing_json", "timing_data")
+    FUNCTION = "run"
+    CATEGORY = "NewsFeed"
+
+    def run(self, codes, plan_json):
+        frame, gap = 2048 / 44100.0, 0.3
+        plan = json.loads(plan_json)
+        bounds, acc = [], 0
+        for t in codes["takes"]:
+            acc += t
+            bounds.append(acc)
+
+        def sec(f, end=False):
+            k = sum(1 for b in bounds[:-1] if (f > b if end else f >= b))
+            return round(f * frame + gap * k, 3)
+        out = []
+        for j, ln in enumerate(codes["lines"]):
+            want = plan["lines"][j] if j < len(plan["lines"]) else {}
+            out.append({"i": j, "speaker": want.get("speaker", ln.get("speaker")), "text": want.get("text", ln.get("text")),
+                        "start": sec(ln["start"]), "end": sec(ln["end"], True)})
+        total = round(acc * frame + gap * max(0, len(bounds) - 1), 3)
+        if len(out) != len(plan["lines"]):
+            print(f"[NewsFeed] WARNING: Drama 3 produced {len(out)} lines for {len(plan['lines'])} SAY lines")
+        text = json.dumps({"seconds": total, "lines": out}, ensure_ascii=False)
+        print(f"[NewsFeed] timing: {text[:600]}")
+        return (text, _data_image(text))
+
+
 class NewsKokoro:
     """Kokoro-82M (ONNX) text to speech for one line. Run per list item."""
 
@@ -341,12 +397,12 @@ class NewsGateAudio:
 
 
 NODE_CLASS_MAPPINGS = {"NewsPickStory": NewsPickStory, "NewsFinishScript": NewsFinishScript,
-                       "NewsShotLists": NewsShotLists, "NewsParseScript": NewsParseScript, "NewsShotRefs": NewsShotRefs, "NewsCompositeShots": NewsCompositeShots, "NewsKokoro": NewsKokoro, "NewsCompile": NewsCompile,
+                       "NewsShotLists": NewsShotLists, "NewsParseScript": NewsParseScript, "NewsShotRefs": NewsShotRefs, "NewsVoiceScript": NewsVoiceScript, "NewsDramaTimes": NewsDramaTimes, "NewsCompositeShots": NewsCompositeShots, "NewsKokoro": NewsKokoro, "NewsCompile": NewsCompile,
                        "NewsMark": NewsMark, "NewsGateAudio": NewsGateAudio,
                        "NewsQwenTTS": qwentts.NewsQwenTTS, "NewsRepeatLine": qwentts.NewsRepeatLine,
                        "NewsSplitLines": qwentts.NewsSplitLines}
 NODE_DISPLAY_NAME_MAPPINGS = {"NewsPickStory": "News Pick Story", "NewsFinishScript": "News Finish Script",
-                              "NewsShotLists": "News Shot Lists", "NewsParseScript": "News Parse Script", "NewsShotRefs": "News Shot Refs", "NewsCompositeShots": "News Composite Shots", "NewsKokoro": "News Kokoro TTS",
+                              "NewsShotLists": "News Shot Lists", "NewsParseScript": "News Parse Script", "NewsShotRefs": "News Shot Refs", "NewsVoiceScript": "News Voice Script", "NewsDramaTimes": "News Drama Times", "NewsCompositeShots": "News Composite Shots", "NewsKokoro": "News Kokoro TTS",
                               "NewsCompile": "News Compile", "NewsMark": "News Mark", "NewsGateAudio": "News Gate Audio",
                               "NewsQwenTTS": "News Qwen3-TTS (batch)", "NewsRepeatLine": "News Repeat Line",
                               "NewsSplitLines": "News Split Lines"}
