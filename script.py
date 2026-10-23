@@ -304,3 +304,37 @@ def voice_script(text, default_desc="a warm, clear storyteller"):
     if not lines:
         raise ValueError("no SAY lines found in the script")
     return " ".join(p[1] for p in parts), {"lines": lines, "voices": order, "warnings": warnings}
+
+
+def assemble_plan(text, n_images, caption=1, out_size=(1280, 720), seed=0):
+    """Plan for NewsCompile-style assembly from a story script: one shot per SHOT with a SAY line, the first n_images of them.
+    Returns (plan, lines)."""
+    shots, cur = [], None
+    title = ""
+    for k, ident, v in tokenize(text):
+        if k == "SHOT":
+            cur = {}
+            shots.append(cur)
+        elif k == "TITLE" and not title:
+            title = v
+        elif cur is not None and k in ("SAY", "CAMERA", "SPEAKER"):
+            cur.setdefault(k, v)
+    shots = [s for s in shots if s.get("SAY")]
+    warnings = []
+    if len(shots) != n_images:
+        warnings.append(f"{len(shots)} shots with a SAY line but {n_images} stills: using {min(len(shots), n_images)}")
+    shots = shots[:n_images]
+    if not shots:
+        raise ValueError("no SHOT with a SAY line in the script")
+    pre = core.load_json("presets.json")
+    rng = random.Random(seed)
+    plan_shots, lines = [], []
+    for i, s in enumerate(shots):
+        line = core._plain(s["SAY"], 600) or "."
+        lines.append(line)
+        cam = (s.get("CAMERA") or "").strip().lower()
+        plan_shots.append({"line": line, "media_id": None, "media": None, "camera": CAMERAS.get(cam) or rng.choice(pre["camera"])})
+    plan = {"ok": True, "warnings": warnings, "shots": plan_shots, "pad": 0.0, "spare_image": False,
+            "story": {"title": title or "Story", "link": "", "caption": int(caption),
+                      "caption_mode": pre["caption"][str(int(caption))], "out_size": list(out_size)}}
+    return plan, lines

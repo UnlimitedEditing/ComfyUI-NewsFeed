@@ -275,6 +275,125 @@ class NewsDramaTimes:
         return (text, _data_image(text))
 
 
+class NewsDramaGaps:
+    """Puts 0.3 s of digital silence between EVERY pair of lines in a Drama 3 narration (Decode already does it between
+    takes; lines of one take run together). Needs Decode with shorten_long_pauses off. story-assemble cuts at these gaps."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"audio": ("AUDIO",), "codes": ("DRAMA3_CODES",)}}
+
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION = "run"
+    CATEGORY = "NewsFeed"
+
+    def run(self, audio, codes):
+        sr = int(audio["sample_rate"])
+        frame, gap = 2048 / 44100.0, 0.3
+        wave = audio["waveform"]
+        bounds, acc = [], 0
+        for t in codes["takes"]:
+            acc += t
+            bounds.append(acc)
+        starts = [0] + bounds[:-1]
+        cuts = []
+        for ln in codes["lines"][1:]:
+            f = ln["start"]
+            if f in starts:
+                continue
+            k = sum(1 for b in bounds[:-1] if f >= b)
+            cuts.append(int(round((f * frame + gap * k) * sr)))
+        zeros = torch.zeros(wave.shape[:-1] + (int(round(gap * sr)),), dtype=wave.dtype)
+        parts, last = [], 0
+        for c in sorted(cuts):
+            parts += [wave[..., last:c], zeros]
+            last = c
+        parts.append(wave[..., last:])
+        print(f"[NewsFeed] inserted {len(cuts)} line gaps into {wave.shape[-1] / sr:.1f}s of narration")
+        return ({"waveform": torch.cat(parts, dim=-1), "sample_rate": sr},)
+
+
+class NewsAssemble:
+    """Cuts a story's stills to its narration: audio file + stills (by filename) + the story script -> captioned mp4.
+    The narration is split at the silences between lines (story-voice joins takes with 0.3 s of silence)."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        opt = {f"image{i}": ("STRING", {"default": ""}) for i in range(1, 9)}
+        opt.update({"audio_init_filename": ("STRING", {"default": ""}), "audio_init_url": ("STRING", {"default": ""})})
+        return {"required": {
+            "script": ("STRING", {"multiline": True, "default": ""}),
+            "audio_file": ("STRING", {"default": ""}),
+            "caption": ("INT", {"default": 1, "min": 0, "max": 3}),
+            "seed": ("INT", {"default": 0, "min": 0, "max": 2**31 - 1}),
+        }, "optional": opt}
+
+    RETURN_TYPES = ("VIDEO", "STRING")
+    RETURN_NAMES = ("video", "report")
+    FUNCTION = "run"
+    CATEGORY = "NewsFeed"
+
+    async def run(self, script, audio_file, caption, seed, audio_init_filename="", audio_init_url="", **images):
+        import asyncio
+        return await asyncio.to_thread(self._run_sync, script, audio_file, caption, seed, audio_init_filename,
+                                       audio_init_url, images)
+
+    @staticmethod
+    def _load_audio(name):
+        import os
+        import re
+        import urllib.request
+        import folder_paths
+        import av
+        if name.startswith(("http://", "https://")):
+            cache = os.path.join(folder_paths.get_temp_directory(), "newsassemble")
+            os.makedirs(cache, exist_ok=True)
+            path = os.path.join(cache, re.sub(r"[^A-Za-z0-9_.-]", "_", name.split("?")[0])[-80:] or "audio")
+            urllib.request.urlretrieve(name, path)
+        else:
+            path = folder_paths.get_annotated_filepath(name)
+        with av.open(path) as container:
+            stream = container.streams.audio[0]
+            rate = stream.rate
+            resampler = av.AudioResampler(format="fltp", layout="mono", rate=rate)
+            parts = [o.to_ndarray() for frame in container.decode(stream) for o in resampler.resample(frame)]
+        return np.concatenate(parts, axis=-1).reshape(-1).astype(np.float32), int(rate)
+
+    def _run_sync(self, script, audio_file, caption, seed, init_name, init_url, images):
+        import os
+        import shutil
+        import tempfile
+        import folder_paths
+        from PIL import Image
+        from comfy_api.latest import InputImpl
+        from . import assemble
+        name = next((x.strip() for x in (audio_file, init_name, init_url) if x and x.strip()), "")
+        if not name:
+            raise ValueError("NewsAssemble: no audio. Give /audio1:R<hash of an audio render> or reply to an audio file")
+        samples, sr = self._load_audio(name)
+        pics = []
+        for i in range(1, 9):
+            v = (images.get(f"image{i}") or "").strip()
+            if v:
+                pics.append(np.asarray(Image.open(folder_paths.get_annotated_filepath(v)).convert("RGB")))
+        if not pics:
+            raise ValueError("NewsAssemble: no stills. Give /image1:R<hash> ... /image8:R<hash> in shot order")
+        h, w = pics[0].shape[:2]
+        out_size = (int(round(w * 1.25 / 2)) * 2, int(round(h * 1.25 / 2)) * 2) if w <= 1024 else (w // 2 * 2, h // 2 * 2)
+        plan, lines = scriptlib.assemble_plan(script, len(pics), caption, out_size, seed)
+        pics = pics[:len(lines)]
+        segs, how = assemble.split_audio(samples, sr, lines)
+        work = tempfile.mkdtemp(prefix="newsasm_")
+        out = os.path.join(tempfile.mkdtemp(prefix="newsasm_out_"), "story.mp4")
+        info = video.compile_video(plan, pics, [(s, sr) for s in segs], out, work)
+        shutil.rmtree(work, ignore_errors=True)
+        info.update({"audio_seconds": round(len(samples) / sr, 2), "split": how, "warnings": plan["warnings"]})
+        print(f"[NewsFeed] assembled {info['seconds']}s from {len(pics)} stills, audio {len(samples) / sr:.1f}s, split={how}, "
+              f"warnings={plan['warnings']}")
+        return (InputImpl.VideoFromFile(out), json.dumps(info, ensure_ascii=False))
+
+
 class NewsKokoro:
     """Kokoro-82M (ONNX) text to speech for one line. Run per list item."""
 
@@ -397,12 +516,12 @@ class NewsGateAudio:
 
 
 NODE_CLASS_MAPPINGS = {"NewsPickStory": NewsPickStory, "NewsFinishScript": NewsFinishScript,
-                       "NewsShotLists": NewsShotLists, "NewsParseScript": NewsParseScript, "NewsShotRefs": NewsShotRefs, "NewsVoiceScript": NewsVoiceScript, "NewsDramaTimes": NewsDramaTimes, "NewsCompositeShots": NewsCompositeShots, "NewsKokoro": NewsKokoro, "NewsCompile": NewsCompile,
+                       "NewsShotLists": NewsShotLists, "NewsParseScript": NewsParseScript, "NewsShotRefs": NewsShotRefs, "NewsDramaGaps": NewsDramaGaps, "NewsAssemble": NewsAssemble, "NewsVoiceScript": NewsVoiceScript, "NewsDramaTimes": NewsDramaTimes, "NewsCompositeShots": NewsCompositeShots, "NewsKokoro": NewsKokoro, "NewsCompile": NewsCompile,
                        "NewsMark": NewsMark, "NewsGateAudio": NewsGateAudio,
                        "NewsQwenTTS": qwentts.NewsQwenTTS, "NewsRepeatLine": qwentts.NewsRepeatLine,
                        "NewsSplitLines": qwentts.NewsSplitLines}
 NODE_DISPLAY_NAME_MAPPINGS = {"NewsPickStory": "News Pick Story", "NewsFinishScript": "News Finish Script",
-                              "NewsShotLists": "News Shot Lists", "NewsParseScript": "News Parse Script", "NewsShotRefs": "News Shot Refs", "NewsVoiceScript": "News Voice Script", "NewsDramaTimes": "News Drama Times", "NewsCompositeShots": "News Composite Shots", "NewsKokoro": "News Kokoro TTS",
+                              "NewsShotLists": "News Shot Lists", "NewsParseScript": "News Parse Script", "NewsShotRefs": "News Shot Refs", "NewsDramaGaps": "News Drama Gaps", "NewsAssemble": "News Assemble", "NewsVoiceScript": "News Voice Script", "NewsDramaTimes": "News Drama Times", "NewsCompositeShots": "News Composite Shots", "NewsKokoro": "News Kokoro TTS",
                               "NewsCompile": "News Compile", "NewsMark": "News Mark", "NewsGateAudio": "News Gate Audio",
                               "NewsQwenTTS": "News Qwen3-TTS (batch)", "NewsRepeatLine": "News Repeat Line",
                               "NewsSplitLines": "News Split Lines"}
